@@ -35,7 +35,7 @@ Real VLA는 로봇공학을 대체하는 foundation model이 아니다. Real VLA
 
 \section{VLA를 만든 계보}
 
-Real VLA는 갑자기 등장한 단일 모델 계열이 아니다. 현재의 VLA는 classical control, state estimation, symbolic planning, motion planning, robot learning, VLM/LLM, robot data scaling, action representation 연구가 겹치면서 만들어진 문제 설정이다. 표~\ref{tab:ch0-history-timeline}는 이 책이 어떤 역사적 흐름을 하나의 engineering contract로 다시 읽는지 요약한다.
+Real VLA는 갑자기 등장한 단일 모델 계열이 아니다. 현재의 VLA는 classical control, state estimation, visual perception, 3D reconstruction, symbolic planning, motion planning, robot learning, VLM/LLM, robot data scaling, action representation 연구가 겹치면서 만들어진 문제 설정이다. 표~\ref{tab:ch0-history-timeline}는 이 책이 어떤 역사적 흐름을 하나의 engineering contract로 다시 읽는지 요약한다.
 
 {\small
 \setlength{\tabcolsep}{1.5pt}
@@ -59,8 +59,10 @@ Real VLA는 갑자기 등장한 단일 모델 계열이 아니다. 현재의 VLA
 \bottomrule
 \endlastfoot
 1950s--1980s & 로봇을 안정적으로 움직이는가? & dynamic programming, Kalman filtering, LQR/MPC, impedance control, operational-space control \cite{kalman1960,hogan1985,khatib1987,mayne2000} & VLA action이 결국 물리 제어계로 들어간다는 사실을 고정한다. \\
+1980s--2010s & camera observation을 metric scene으로 복원하는가? & feature matching, multi-view geometry, visual SLAM, 3D reconstruction \cite{lowe2004sift,hartley2004,murartal2015orbslam} & VLA가 보는 image가 곧 state가 아니며, calibration, pose, map, uncertainty를 거쳐야 함을 보인다. \\
 1960s--2000s & 복잡한 목표를 어떻게 계획하는가? & A*, STRIPS, PDDL, GraphPlan, heuristic planning \cite{lavalle2006} & 언어 목표를 executable subgoal과 precondition/effect로 읽는 기준을 제공한다. \\
 1990s--2010s & symbolic goal을 연속공간 motion으로 바꾸는가? & PRM, RRT/RRT*, trajectory optimization, TAMP \cite{kavraki1996,lavalle2001rrt,kaelbling2011tamp} & semantic proposal이 geometry, grasp, collision, trajectory feasibility를 통과해야 함을 보인다. \\
+2012--2020 & object, region, scene을 semantic entity로 잡는가? & CNN detection, Faster R-CNN, Mask R-CNN, neural scene representation \cite{ren2015fasterrcnn,he2017maskrcnn,mildenhall2020nerf} & language grounding이 pixel label만으로 끝나지 않고 object mask, pose, affordance, 3D field로 이어져야 함을 보인다. \\
 2010s & 시각에서 바로 action을 배울 수 있는가? & DAgger, guided policy search, visual foresight, diffusion policy \cite{ross2011dagger,levine2016gps,ebert2018visualforesight,diffusionpolicy2023} & VLA 이전의 image-to-action 학습과 covariate shift 문제를 연결한다. \\
 2017--2021 & 언어와 시각 표현을 크게 학습할 수 있는가? & Transformer, ViT, CLIP \cite{vaswani2017,dosovitskiy2021vit,clip2021} & VLA backbone의 representation substrate를 만든다. \\
 2022 & LLM/VLM을 planner처럼 쓸 수 있는가? & SayCan, Code as Policies, Inner Monologue, VoxPoser \cite{saycan2022,codeaspolicies2022,innermonologue2022,voxposer2023} & language reasoning과 robot affordance, skill library, controller 호출의 경계를 드러낸다. \\
