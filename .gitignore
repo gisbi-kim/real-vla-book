@@ -1,9 +1,8 @@
 # TeX build intermediates
-4_latex_book/build/*
-!4_latex_book/build/main.pdf
+manuscript/latex/build/*
 
 # QA render images are reproducible and bulky
-4_latex_book/build/qa/
+manuscript/latex/build/qa/
 
 # LaTeX temporary files outside build/
 *.aux

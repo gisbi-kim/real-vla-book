@@ -2,21 +2,39 @@
 
 **Real VLA: 로봇공학자의 관점에서 본 Vision-Language-Action**
 
-[![Download PDF](https://img.shields.io/badge/Download-main.pdf-0B4F8A?style=for-the-badge&logo=adobeacrobatreader&logoColor=white)](https://github.com/gisbi-kim/real-vla-book/raw/main/4_latex_book/build/main.pdf)
+[![Download PDF](https://img.shields.io/badge/Download-real--vla--book.pdf-0B4F8A?style=for-the-badge&logo=adobeacrobatreader&logoColor=white)](https://github.com/gisbi-kim/real-vla-book/raw/main/dist/real-vla-book.pdf)
 
 This repository contains a Korean technical book manuscript on Vision-Language-Action systems from a roboticist's perspective. The book frames Real VLA not as a larger VLM, but as a system contract connecting language-conditioned perception, learned action, state estimation, control, data engines, evaluation, real-time execution, and safety assurance.
 
-## Quick Links
+## For Readers
 
-- Final PDF: [`4_latex_book/build/main.pdf`](4_latex_book/build/main.pdf)
-- Direct download: [`main.pdf`](https://github.com/gisbi-kim/real-vla-book/raw/main/4_latex_book/build/main.pdf)
-- LaTeX entry point: [`4_latex_book/main.tex`](4_latex_book/main.tex)
-- Chapter sources: [`4_latex_book/chapters/`](4_latex_book/chapters/)
-- Goal-loop revision logs: [`3_goal_loop/`](3_goal_loop/)
+- Final PDF: [`dist/real-vla-book.pdf`](dist/real-vla-book.pdf)
+- Direct download: [`real-vla-book.pdf`](https://github.com/gisbi-kim/real-vla-book/raw/main/dist/real-vla-book.pdf)
+
+## Repository Layout
+
+```text
+dist/
+  real-vla-book.pdf          # reader-facing compiled book
+
+manuscript/
+  latex/                     # buildable LaTeX manuscript source
+    main.tex
+    chapters/
+    build.ps1
+
+process/
+  planning/                  # early planning notes and curriculum sketches
+  book-bible/                # book bible, interface specification, glossary drafts
+  chapter-drafts/            # intermediate chapter drafting artifacts
+  goal-loop/                 # iterative action plans and revision logs
+```
+
+The reader-facing artifact is in `dist/`. The `process/` directory is kept for provenance and revision history, not as the primary reading path.
 
 ## Manuscript Structure
 
-- Chapter 0: book intent, system contract, evidence tier
+- Chapter 0: book intent, system contract, evidence tier, VLA history timeline
 - Part I: Real VLA stack
 - Part II: learning foundations
 - Part III: from planner to VLA
@@ -30,8 +48,16 @@ This repository contains a Korean technical book manuscript on Vision-Language-A
 The manuscript is built with XeLaTeX in Docker:
 
 ```powershell
-docker run --rm -v "${PWD}:/work" -w /work/4_latex_book texlive/texlive:latest latexmk -xelatex -interaction=nonstopmode -file-line-error -outdir=build main.tex
+powershell -ExecutionPolicy Bypass -File .\manuscript\latex\build.ps1
 ```
+
+Equivalent command from the repository root:
+
+```powershell
+docker run --rm -v "${PWD}:/work" -w /work/manuscript/latex texlive/texlive:latest latexmk -xelatex -interaction=nonstopmode -file-line-error -outdir=build main.tex
+```
+
+The build output is `manuscript/latex/build/main.pdf`. The published reader-facing copy is `dist/real-vla-book.pdf`.
 
 The expected page size is `170mm x 240mm`.
 
