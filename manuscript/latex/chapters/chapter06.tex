@@ -1,270 +1,287 @@
-\chapter{Imitation Learning and Covariate Shift}
+\chapter{Planning, Motion Planning, and TAMP}
 
 \section*{학습 목표}
 
-이 장은 VLA 이전의 로봇러닝에서 가장 직접적인 계보인 imitation learning을 다룬다. VLA는 foundation model처럼 보이지만, 로봇 action을 학습한다는 점에서는 여전히 demonstration, behavior cloning, rollout distribution, correction data의 문제를 가진다.
+이 장은 Real VLA에서 planning layer가 왜 사라지지 않는지 설명한다. VLA가 action을 직접 생성하더라도 long-horizon task에서는 goal decomposition, precondition, feasibility, recovery, constraint satisfaction이 필요하다. 이 장의 목표는 classical planning을 복고적으로 소개하는 것이 아니라, VLA가 실제 로봇 시스템 안에서 planner와 어떻게 결합되는지 이해하는 것이다.
 
 \begin{enumerate}
-  \item behavior cloning objective를 정의한다.
-  \item open-loop supervised learning과 closed-loop robot deployment의 차이를 설명한다.
-  \item covariate shift와 error compounding을 수식으로 정리한다.
-  \item DAgger, intervention, recovery data가 VLA fine-tuning에서 왜 중요한지 설명한다.
+  \item symbolic planning, motion planning, TAMP의 문제 정의를 구분한다.
+  \item language instruction이 plan, subgoal, constraint로 바뀌는 과정을 정식화한다.
+  \item continuous feasibility가 왜 LLM/VLA planning의 병목인지 설명한다.
+  \item VLA planner, affordance model, motion planner, controller가 하나의 loop로 연결되는 구조를 정리한다.
 \end{enumerate}
 
-\section{Demonstration data}
+\section{Planning은 action sequence의 문제다}
 
-로봇 imitation learning의 입력은 demonstration dataset이다. 하나의 trajectory를 다음과 같이 쓰자 \cite{ross2011dagger,levine2016gps}.
+자연어 명령은 종종 하나의 문장으로 주어진다. 그러나 로봇이 실행해야 하는 것은 보통 하나의 action이 아니라 조건을 만족하는 action sequence이다. 예를 들어 ``테이블 위 컵을 식기건조대에 놓아라''라는 명령은 object grounding, grasp feasibility, collision-free transport, stable placement, release verification을 포함한다. 이 문제를 바로 continuous action vector 하나로 바꾸면 중요한 구조가 사라진다.
+
+task planning 문제는 다음 tuple로 표현할 수 있다 \cite{lavalle2006,kaelbling2011tamp}.
 \begin{equation}
-  \tau_i
+  \mathcal{P}
   =
-  \{(\obs_{i,t},\conf_{i,t},\task_i,\act^{E}_{i,t})\}_{t=1}^{T_i}.
-  \label{eq:demo-trajectory}
+  (\mathcal{S},\mathcal{A},s_0,\mathcal{G},\gamma).
+  \label{eq:planning-problem}
 \end{equation}
-여기서 $\act^{E}_{i,t}$는 expert action이다. VLA setting에서는 $\obs_{i,t}$가 image, depth, proprioception, tactile signal, history를 포함할 수 있고, $\task_i$는 language instruction 또는 subgoal이다. 전체 dataset은
+여기서 $\mathcal{S}$는 symbolic state set, $\mathcal{A}$는 symbolic action set, $s_0$는 initial state, $\mathcal{G}$는 goal condition, $\gamma$는 transition function이다. 하나의 plan은 action sequence이다.
 \begin{equation}
-  \mathcal{D}_{E}
+  \pi^{plan}
   =
-  \{\tau_i\}_{i=1}^{N}.
-  \label{eq:expert-dataset}
+  (a_1,a_2,\ldots,a_K),
+  \qquad
+  s_K \in \mathcal{G}.
+  \label{eq:plan-sequence}
 \end{equation}
+이때 $a_k$는 VLA policy의 continuous action $\act_t$와 구분하기 위해 symbolic action으로 읽어야 한다. 예를 들어 \texttt{pick(mug)}, \texttt{place(mug,rack)}, \texttt{open(drawer)}는 symbolic action이고, end-effector delta pose나 gripper command는 controller가 실행하는 action이다.
 
-중요한 점은 trajectory가 단순한 image-action pair가 아니라는 것이다. trajectory는 embodiment, controller, action representation, reset procedure, safety rule, annotation scheme에 묶여 있다. 같은 ``pick'' demonstration이라도 action이 joint position인지, end-effector delta인지, waypoint인지, action chunk인지에 따라 학습 문제가 달라진다.
-
-\section{Behavior cloning}
-
-Behavior cloning은 expert action을 supervised learning target으로 둔다. 가장 단순한 objective는 다음과 같다.
-\begin{equation}
-  \theta^\star
-  =
-  \arg\min_{\theta}
-  \mathbb{E}_{(\obs,\conf,\task,\act^E)\sim\mathcal{D}_{E}}
-  \left[
-  \mathcal{L}\bigl(\pi_{\theta}(\obs,\conf,\task),\act^E\bigr)
-  \right].
-  \label{eq:bc-objective}
-\end{equation}
-연속 action에서는 $\ell_2$ loss나 negative log-likelihood가 쓰일 수 있다.
-\begin{equation}
-  \mathcal{L}_{reg}
-  =
-  \|\pi_{\theta}(\obs,\conf,\task)-\act^E\|_2^2.
-  \label{eq:l2-bc}
-\end{equation}
-확률적 policy에서는 expert action의 likelihood를 최대화한다.
-\begin{equation}
-  \mathcal{L}_{nll}
-  =
-  -\log p_{\theta}(\act^E\mid \obs,\conf,\task).
-  \label{eq:nll-bc}
-\end{equation}
-
-VLA에서는 action distribution이 단봉일 필요가 없다. 같은 instruction과 observation에서도 여러 grasp, 여러 path, 여러 correction이 가능하다. 따라서 단순 regression loss는 multi-modal action을 평균내는 문제를 만들 수 있다. 이 문제는 diffusion policy, flow matching, discretized action token, mixture density 같은 표현으로 이어진다. 자세한 action representation은 Chapter 13에서 다룬다.
-
-\begin{definitionbox}{Behavior cloning}
-Behavior cloning은 expert trajectory에서 observation-condition-action mapping을 supervised learning으로 학습하는 imitation learning 방법이다. 장점은 단순성과 데이터 효율이고, 핵심 약점은 closed-loop rollout 중 학습 분포를 벗어날 수 있다는 점이다.
+\begin{definitionbox}{Task planning}
+Task planning은 목표를 달성하기 위한 discrete action sequence를 찾는 문제이다. 이 계층은 무엇을 어떤 순서로 해야 하는지 다루지만, 각 action이 실제 로봇의 configuration space에서 가능한지는 별도 검사가 필요하다.
 \end{definitionbox}
 
-\section{Open-loop accuracy is not closed-loop success}
+\section{Preconditions and effects}
 
-Behavior cloning loss는 expert dataset distribution 위에서 계산된다. 하지만 deployment에서 policy가 방문하는 state distribution은 expert distribution과 다를 수 있다. expert가 만드는 state distribution을 $d_E(\state)$, learned policy가 만드는 distribution을 $d_{\theta}(\state)$라 하자. 학습 objective는 대개
+고전 symbolic planning의 핵심은 action을 precondition과 effect로 표현하는 것이다. action $a$가 state $s$에서 실행 가능하려면 precondition이 만족되어야 한다.
 \begin{equation}
-  \mathbb{E}_{\state\sim d_E}
-  [\ell(\pi_{\theta}(\state),\pi_E(\state))]
-  \label{eq:expert-distribution-loss}
+  \mathrm{Pre}(a) \subseteq s.
+  \label{eq:precondition}
 \end{equation}
-를 줄인다. 그러나 deployment risk는
+action을 실행한 뒤의 state는 add effect와 delete effect로 갱신된다.
 \begin{equation}
-  \mathbb{E}_{\state\sim d_{\theta}}
-  [\ell(\pi_{\theta}(\state),\pi_E(\state))]
-  \label{eq:policy-distribution-loss}
+  \gamma(s,a)
+  =
+  (s \setminus \mathrm{Del}(a)) \cup \mathrm{Add}(a).
+  \label{eq:add-delete-effect}
 \end{equation}
-에 가깝다.
 
-두 distribution이 같으면 supervised learning으로 충분할 수 있다. 문제는 작은 action error가 다음 observation을 바꾸고, 바뀐 observation에서 다시 더 큰 error가 발생한다는 점이다. 이를 covariate shift라고 부른다.
+로봇 조작 예제에서 \texttt{pick(mug)}의 precondition은 다음과 같은 symbolic predicate로 구성될 수 있다.
+\begin{equation}
+  \begin{aligned}
+  \mathrm{Pre}(\texttt{pick(mug)})
+  =
+  \{&
+  \texttt{visible(mug)},\;
+  \texttt{reachable(mug)},\\
+  &
+  \texttt{graspable(mug)},\;
+  \texttt{gripper-empty}
+  \}.
+  \end{aligned}
+  \label{eq:pick-preconditions}
+\end{equation}
 
-\begin{warningbox}{Open-loop metric의 한계}
-validation set에서 action prediction error가 낮아도 real robot rollout success가 높다는 보장은 없다. validation set은 보통 expert가 방문한 상태이고, 배치 중 policy가 만드는 off-distribution 상태를 충분히 포함하지 않는다.
+문제는 \texttt{reachable}이나 \texttt{graspable}이 순수 symbolic predicate가 아니라는 점이다. 이것들은 robot geometry, scene geometry, grasp sampler, IK, collision checking, contact condition에 의해 결정된다. 이 지점에서 task planning과 motion planning이 결합된다.
+
+\section{Search and heuristic}
+
+Planning은 search problem으로 볼 수 있다. 각 node는 symbolic state이고, edge는 action이다. 비용이 있는 planning에서는 다음 목적을 최소화한다.
+\begin{equation}
+  \pi^{plan\star}
+  =
+  \arg\min_{\pi^{plan}}
+  \sum_{k=1}^{K} c(s_{k-1},a_k)
+  \quad
+  \text{s.t.}\quad
+  s_K\in\mathcal{G}.
+  \label{eq:planning-cost}
+\end{equation}
+A*와 같은 heuristic search는 다음 priority를 사용한다.
+\begin{equation}
+  F(n)=G(n)+H(n),
+  \label{eq:a-star}
+\end{equation}
+여기서 $G(n)$은 현재 node까지의 cost, $H(n)$은 goal까지의 추정 cost이다.
+
+LLM/VLM planner를 이 관점으로 보면, 큰 모델은 heuristic 또는 proposal generator 역할을 할 수 있다. 즉, 어떤 action sequence가 plausible한지 제안할 수 있다. 그러나 plausible plan과 executable plan은 다르다. Real VLA에서는 language model proposal이 feasibility checker, affordance model, motion planner를 통과해야 한다.
+
+\begin{warningbox}{Plausible plan은 executable plan이 아니다}
+LLM이 ``컵을 집고 선반에 놓아라''라는 plan을 생성할 수 있어도, 컵이 reachable한지, grasp가 가능한지, 선반까지 collision-free path가 있는지, 놓은 뒤 안정적인지 보장하지 않는다. 자연어 계획은 physical feasibility check를 대체하지 못한다.
 \end{warningbox}
 
-\section{Covariate shift}
+\section{Motion planning in configuration space}
 
-closed-loop rollout을 다음 동역학으로 쓰자.
+Motion planning은 continuous configuration space에서 충돌 없는 경로를 찾는 문제이다. 로봇 configuration을 $\conf\in\mathcal{Q}$라 하자. 장애물과 self-collision을 피하는 자유공간은
 \begin{equation}
-  \state_{t+1}=f(\state_t,\act_t,\bm{w}_t),
+  \mathcal{Q}_{free}
+  =
+  \{\conf\in\mathcal{Q}\mid \mathrm{Collision}(\conf)=0\}.
+  \label{eq:q-free}
+\end{equation}
+motion planning 문제는 시작 configuration $\conf_{start}$와 목표 set $\mathcal{Q}_{goal}$ 사이의 경로를 찾는 것이다.
+\begin{equation}
+  \xi:[0,1]\rightarrow \mathcal{Q}_{free},
   \qquad
-  \act_t=\pi_{\theta}(\obs_t,\conf_t,\task).
-  \label{eq:bc-rollout-dynamics}
+  \xi(0)=\conf_{start},
+  \qquad
+  \xi(1)\in\mathcal{Q}_{goal}.
+  \label{eq:motion-planning-path}
 \end{equation}
-expert policy는 $\pi_E$이고 learned policy는 $\pi_{\theta}$이다. 한 step error probability를
+
+VLA가 end-effector target이나 waypoint를 출력한다면, 그것은 보통 $\mathcal{Q}_{goal}$ 또는 intermediate constraint를 정의한다. 하지만 실제 path $\xi$는 collision, joint limit, velocity limit, singularity, workspace bound를 만족해야 한다.
+
+\section{Sampling-based planning}
+
+PRM이나 RRT 계열의 sampling-based planner는 continuous space를 직접 격자로 나누지 않고 sampled configuration을 이용해 graph 또는 tree를 만든다. 단순화하면 roadmap planner는 다음 graph를 만든다.
 \begin{equation}
-  \epsilon
+  \begin{aligned}
+  \mathcal{G}_{roadmap}&=(V,E),\qquad
+  V\subset\mathcal{Q}_{free},\\
+  E&=
+  \{(q_i,q_j)\mid
+  \mathrm{LocalPlan}(q_i,q_j)\subset\mathcal{Q}_{free}\}.
+  \end{aligned}
+  \label{eq:roadmap}
+\end{equation}
+
+RRT 계열은 시작 configuration에서 tree를 확장한다.
+\begin{equation}
+  q_{new}
   =
-  \Pr_{\state\sim d_E}
-  \left[
-  \pi_{\theta}(\state)\ne \pi_E(\state)
-  \right]
-  \label{eq:one-step-error}
+  \mathrm{Steer}(q_{near},q_{rand},\eta),
+  \qquad
+  q_{new}\in\mathcal{Q}_{free}.
+  \label{eq:rrt-steer}
 \end{equation}
-라고 하면, horizon이 길어질수록 누적 실패 확률은 커진다. 매우 단순한 union bound만 써도
+
+이 방법들은 high-dimensional configuration space에서 유용하지만, VLA와 결합할 때 두 가지 문제가 생긴다. 첫째, planner가 실패했을 때 그것이 VLA의 잘못인지, goal pose의 잘못인지, scene estimate의 잘못인지 구분해야 한다. 둘째, planner의 computation time이 VLA inference loop와 맞아야 한다. 따라서 planner output은 trajectory뿐 아니라 failure reason을 함께 반환해야 한다.
+
+\section{Trajectory optimization}
+
+Trajectory optimization은 경로를 변수로 두고 objective와 constraint를 최적화한다.
 \begin{equation}
-  \Pr[\text{at least one error in }T\text{ steps}]
-  \le
-  T\epsilon.
-  \label{eq:error-union-bound}
-\end{equation}
-실제 문제는 이보다 더 나쁘다. early error가 policy를 expert dataset 밖의 상태로 보내면 다음 step의 error probability 자체가 증가한다.
-
-VLA에서는 covariate shift가 여러 형태로 나타난다.
-
-\begin{itemize}
-  \item object pose가 demonstration보다 조금 벗어난 상태
-  \item gripper가 half-closed인 상태
-  \item failed grasp 이후 물체가 기울어진 상태
-  \item language instruction은 같지만 scene relation이 바뀐 상태
-  \item contact 후 slip이 발생했지만 image에서는 잘 보이지 않는 상태
-\end{itemize}
-
-\section{Recovery as a learned behavior}
-
-많은 dataset은 성공 trajectory 중심으로 구성된다. 하지만 real robot은 실패 직전과 실패 직후의 상태를 자주 만난다. 따라서 policy는 nominal action뿐 아니라 recovery action도 배워야 한다. recovery policy를 명시적으로 쓰면 다음과 같은 gating 구조가 된다.
-\begin{equation}
-  \act_t
+\begin{aligned}
+  \xi^\star
   =
-  \begin{cases}
-  \pi^{nom}_{\theta}(\obs_t,\conf_t,\task), & r_t=0,\\
-  \pi^{rec}_{\phi}(\obs_t,\conf_t,\task,e_t), & r_t=1,
-  \end{cases}
-  \label{eq:recovery-policy}
+  \arg\min_{\xi}
+  &\quad
+  J_{task}(\xi;\act_t)
+  +\lambda_s J_{smooth}(\xi)
+  +\lambda_c J_{collision}(\xi) \\
+  \text{s.t.}
+  &\quad
+  \xi(\tau)\in\mathcal{Q}_{free},\\
+  &\quad
+  \dot{\xi}(\tau)\in\mathcal{V},\quad
+  \ddot{\xi}(\tau)\in\mathcal{A}.
+\end{aligned}
+\label{eq:trajopt}
 \end{equation}
-여기서 $r_t$는 recovery mode indicator이고, $e_t$는 failure estimate이다. 하나의 큰 VLA policy가 nominal과 recovery를 모두 학습할 수도 있지만, 데이터에는 recovery context가 명시적으로 들어가야 한다.
 
-\begin{definitionbox}{Recovery data}
-Recovery data는 실패 후 원래 task를 계속 수행하기 위해 필요한 correction trajectory이다. 예를 들어 regrasp, pull-back-and-retry, re-localize, ask-human, stop-safe 같은 행동이 포함된다.
-\end{definitionbox}
-
-\section{DAgger and dataset aggregation}
-
-DAgger의 핵심은 learned policy가 실제로 방문하는 상태에서 expert label을 다시 모으는 것이다. 반복 $k$에서 policy $\pi_{\theta_k}$를 rollout하여 방문 상태 $\state\sim d_{\theta_k}$를 수집하고, expert action을 query한다.
+Trajectory optimization은 VLA가 생성한 goal, cost map, affordance map, forbidden region을 objective나 constraint로 넣기 좋다. 예를 들어 ``유리컵을 건드리지 말라''는 instruction은 forbidden region $\mathcal{R}_{forbid}$로 바뀔 수 있고, collision 또는 distance constraint로 들어갈 수 있다.
 \begin{equation}
-  \mathcal{D}_{k+1}
-  =
-  \mathcal{D}_{k}
-  \cup
-  \{(\obs_t,\conf_t,\task,\pi_E(\obs_t,\conf_t,\task))\}_{\state_t\sim d_{\theta_k}}.
-  \label{eq:dagger-update}
+  d(\xi(\tau),\mathcal{R}_{forbid}) \ge d_{min}
+  \quad
+  \forall \tau.
+  \label{eq:forbidden-distance}
 \end{equation}
-그 다음 aggregated dataset 위에서 다시 policy를 학습한다.
+
+\section{Task and motion planning}
+
+TAMP는 symbolic action sequence와 continuous parameter를 함께 찾는 문제이다. symbolic action $a_k$는 grasp, placement, path, timing 같은 continuous parameter $\theta_k$를 필요로 한다.
 \begin{equation}
-  \theta_{k+1}
+  (a_{1:K}^{\star},\theta_{1:K}^{\star})
   =
-  \arg\min_{\theta}
-  \mathbb{E}_{(\obs,\conf,\task,\act^E)\sim\mathcal{D}_{k+1}}
-  [
-  \mathcal{L}(\pi_{\theta}(\obs,\conf,\task),\act^E)
-  ].
-  \label{eq:dagger-training}
+  \arg\min_{a_{1:K},\theta_{1:K}}
+  \sum_{k=1}^{K}
+  C(a_k,\theta_k)
+  \quad
+  \text{s.t.}\quad
+  \Phi(a_{1:K},\theta_{1:K};\hat{\state}_0)=1.
+  \label{eq:tamp}
 \end{equation}
+여기서 $\Phi$는 symbolic precondition, geometric feasibility, collision checking, grasp validity, placement stability를 모두 포함하는 feasibility predicate이다.
 
-Real VLA에서 DAgger를 그대로 적용하기는 쉽지 않다. expert query가 비싸고, robot rollout이 느리며, unsafe state에서 expert intervention이 필요하다. 그러나 원리는 중요하다. 좋은 VLA dataset은 성공 demonstration만 모으는 것이 아니라 policy가 실제로 실패하는 state를 찾아내고, 그 state에서 어떤 correction이 필요한지 기록해야 한다.
-
-\section{Intervention and correction labels}
-
-실제 로봇 데이터 수집에서는 사람이 teleoperation, shared autonomy, emergency stop, verbal correction으로 개입할 수 있다. 이 개입은 단순히 나쁜 rollout을 제거할 근거가 아니라 학습 signal이다. trajectory record를 다음처럼 확장할 수 있다.
+예를 들어 \texttt{pick(mug)}는 단순한 symbolic action처럼 보이지만 실제로는 grasp pose $g$, pregrasp pose $p$, approach trajectory $\xi$, gripper force $f_g$를 필요로 한다.
 \begin{equation}
-  \tau_i
+  \theta_{\texttt{pick}}
   =
-  \{(\obs_t,\conf_t,\task,\act_t,h_t,c_t,y_t)\}_{t=1}^{T_i}.
-  \label{eq:intervention-trajectory}
+  (g,p,\xi,f_g).
+  \label{eq:pick-continuous-params}
 \end{equation}
-여기서 $h_t$는 human intervention flag, $c_t$는 correction action 또는 instruction, $y_t$는 success/failure/progress label이다.
+따라서 TAMP는 ``무엇을 할 것인가''와 ``그것을 어떻게 물리적으로 실행할 것인가''를 동시에 다룬다.
 
 \begin{table}[ht]
 \centering
-\caption{VLA imitation dataset에 필요한 label}
-\label{tab:vla-imitation-labels}
+\caption{Planning 계층별 책임}
+\label{tab:planning-layers}
 \small
 \begin{tabularx}{\textwidth}{p{30mm}X X}
 \toprule
-Label & 의미 & 쓰임 \\
+계층 & 입력/출력 & 대표 failure \\
 \midrule
-success label & task 종료 시 성공 여부 & benchmark와 reward model 학습 \\
-progress label & subgoal 진행 상태 & long-horizon monitoring \\
-intervention flag & 사람이 개입한 시점 & 위험 상태 탐지와 data filtering \\
-correction action & expert가 바꾼 action & DAgger-style aggregation \\
-failure mode & grasp fail, collision, slip, timeout 등 & targeted data collection \\
-controller metadata & action type, controller, rate, safety filter & action representation 해석 \\
+Task planning & symbolic state, goal $\rightarrow$ action sequence & missing precondition, wrong ordering, no recovery branch \\
+Motion planning & start/goal configuration, geometry $\rightarrow$ collision-free path & IK failure, narrow passage, collision, timeout \\
+Trajectory optimization & cost, constraints $\rightarrow$ smooth feasible trajectory & local minimum, constraint violation, solver latency \\
+TAMP & symbolic action + continuous parameter search & sampled grasp/pose infeasible, combinatorial explosion \\
+VLA/ER planning & language, image, memory $\rightarrow$ subgoal, affordance, plan proposal & plausible but infeasible plan, hallucinated object, unsafe ambiguity \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-이 label들이 없으면 VLA fine-tuning은 성공 trajectory의 평균적인 action만 모방하게 된다. 반대로 correction과 failure mode가 있으면 data engine은 어떤 state를 더 수집해야 하는지 알 수 있다.
+\section{VLA as planner, scorer, or executor}
 
-\section{Success-only data의 위험}
+VLA와 planning의 결합 방식은 하나가 아니다. Real VLA stack에서 큰 모델은 다음 네 역할 중 하나를 맡을 수 있다.
 
-성공 trajectory만 모으면 dataset은 깨끗해 보인다. 그러나 성공 data만으로는 다음 질문에 답하기 어렵다.
+\begin{enumerate}
+  \item \textbf{Planner}: language와 scene을 보고 symbolic 또는 semi-symbolic plan을 제안한다.
+  \item \textbf{Scorer}: 여러 skill 또는 action 후보의 affordance score를 계산한다.
+  \item \textbf{Constraint generator}: forbidden region, target relation, success condition을 만든다.
+  \item \textbf{Executor}: observation과 subgoal을 받아 continuous action을 생성한다.
+\end{enumerate}
+
+이 역할들은 한 시스템 안에서 함께 존재할 수 있다.
+\begin{equation}
+  \task,\obs_t
+  \xrightarrow{\text{ER/VLM}}
+  (g_{1:K},\mathcal{C}_{1:K})
+  \xrightarrow{\text{TAMP/Motion Planner}}
+  (\xi_{1:K},r_{1:K})
+  \xrightarrow{\text{VLA/Controller}}
+  \ctrlcmd_t.
+  \label{eq:vla-planning-pipeline}
+\end{equation}
+여기서 $g_{1:K}$는 subgoal sequence, $\mathcal{C}_{1:K}$는 constraint sequence, $\xi_{1:K}$는 feasible trajectory, $r_{1:K}$는 controller reference이다.
+
+\section{Closed-loop replanning}
+
+실제 로봇 실행은 open-loop plan execution이 아니다. perception error, object motion, human intervention, contact failure, planner timeout이 발생하면 replanning이 필요하다. 하나의 receding planning loop는 다음과 같이 쓸 수 있다.
+\begin{equation}
+\begin{aligned}
+  \bel_t &= \mathrm{UpdateBelief}(\bel_{t-1},\obs_t),\\
+  p_t &= \mathrm{Plan}(\task,\bel_t,\mathcal{C}_t),\\
+  \act_t &= \policy(\obs_t,\conf_t,p_t),\\
+  \ctrlcmd_t &= \controller(\act_t,\hat{\state}_t,\mathcal{C}_t).
+\end{aligned}
+\label{eq:closed-loop-planning}
+\end{equation}
+
+이 loop에서 VLA는 plan을 매 step 다시 만들 수도 있고, plan은 느리게 갱신하고 VLA policy만 빠르게 실행할 수도 있다. 핵심은 plan, action, controller, safety가 서로 다른 rate로 동작할 수 있다는 점이다.
+
+\section{Evaluation metadata}
+
+Planning이 포함된 VLA 실험은 단순 success rate만으로 평가하면 부족하다. 최소한 다음 항목을 기록해야 한다.
 
 \begin{itemize}
-  \item policy가 실패 직전에 어떤 warning signal을 보아야 하는가?
-  \item 실패 후 어떤 recovery action이 가능한가?
-  \item 어떤 failure가 perception 문제이고 어떤 failure가 control interface 문제인가?
-  \item user instruction이 ambiguous할 때 stop/ask behavior를 어떻게 배울 것인가?
+  \item plan length and number of replans
+  \item symbolic failure reason: missing object, unsatisfied precondition, no valid action
+  \item motion planning failure reason: IK failure, collision, timeout, narrow passage
+  \item trajectory optimization status: converged, infeasible, constraint violation
+  \item VLA role: planner, scorer, constraint generator, executor
+  \item recovery branch and human intervention count
+  \item time budget: ER/VLM inference, planning, motion planning, controller loop
 \end{itemize}
 
-실패 data는 모델을 나쁘게 만드는 noise가 아니다. 제대로 annotation되면 failure data는 safety, recovery, uncertainty estimation의 핵심 자원이다.
+이 기록이 없으면 ``VLA가 실패했다''라는 문장은 너무 거칠다. 실패는 semantic parsing, object grounding, symbolic precondition, grasp sampling, IK, collision checking, controller tracking, contact safety 중 어느 곳에서든 발생할 수 있다.
 
-\section{Action representation and imitation difficulty}
-
-같은 behavior cloning이라도 action representation에 따라 난이도가 달라진다.
-
-\begin{table}[ht]
-\centering
-\caption{Action representation과 imitation learning 난이도}
-\label{tab:action-bc-difficulty}
-\small
-\begin{tabularx}{\textwidth}{p{28mm}X X}
-\toprule
-Action type & 장점 & imitation risk \\
-\midrule
-Joint position & robot API와 직접 연결 가능 & embodiment-specific, joint limit 근처 error \\
-End-effector delta & multi-robot transfer에 유리 & frame/scale ambiguity, contact force 미반영 \\
-Waypoint & planner와 결합 가능 & planner failure와 policy failure가 섞임 \\
-Action chunk & temporal consistency 증가 & interruption과 recovery가 어려움 \\
-Discrete token & language-model pipeline과 잘 맞음 & quantization error, continuous precision 손실 \\
-Diffusion/flow action & multi-modal action 표현 가능 & sampling latency와 controller rate 문제 \\
-\bottomrule
-\end{tabularx}
-\end{table}
-
-따라서 imitation learning chapter는 단순히 loss function의 장이 아니다. 어떤 action interface를 imitation target으로 삼을지 결정하는 장이다.
-
-\section{Data engine view}
-
-Real VLA에서 imitation learning은 one-shot training recipe가 아니라 data engine이다. 실행 중 실패를 발견하고, 그 실패를 분류하고, 필요한 correction을 수집하고, 다시 fine-tuning하거나 evaluation set에 넣는 loop가 필요하다.
-\begin{equation}
-  \mathcal{D}_{t+1}
-  =
-  \mathcal{D}_{t}
-  \cup
-  \mathcal{D}^{success}_{t}
-  \cup
-  \mathcal{D}^{failure}_{t}
-  \cup
-  \mathcal{D}^{correction}_{t}.
-  \label{eq:data-engine-update}
-\end{equation}
-이 loop는 Chapter 14에서 더 자세히 다룰 data engine의 기본 형태이다.
-
-\begin{casebox}{Case study: success-only data가 recovery를 지우는 방식}
-성공 trajectory만 모으면 policy는 실패 직전 state와 recovery action을 보지 못한다. 실제 rollout에서 gripper가 미끄러지거나 object pose가 살짝 어긋나면 policy는 expert distribution 밖의 상태에 놓인다. intervention과 correction label이 없는 dataset은 offline accuracy가 높아도 deployment recovery를 설명하지 못한다.
+\begin{casebox}{Case study: SayCan과 VoxPoser를 feasibility 관점에서 읽기}
+SayCan은 language likelihood와 affordance score를 결합해 executable skill을 고르려 했고, VoxPoser는 language-conditioned value map을 통해 motion optimization이 사용할 field를 만들었다 \cite{saycan2022,voxposer2023}. 두 사례 모두 핵심은 planner가 자연어 plan을 쓰는지가 아니라, semantic proposal이 feasibility check와 어떻게 만나는가이다.
 \end{casebox}
 
 \chapterwork
-{DAgger와 guided policy search를 읽고, VLA fine-tuning에서 failure/correction data가 왜 demonstration보다 중요한 순간이 있는지 확인하라 \cite{ross2011dagger,levine2016gps}.}
-{behavior cloning이 expert distribution에서는 강하지만 robot rollout에서는 약해지는 이유는 무엇인가?}
-{하나의 manipulation task에 대해 success, failure, correction, intervention, recovery record를 포함한 data collection protocol을 설계하라.}
+{Sampling-based motion planning과 TAMP를 LLM/VLM planner 논문과 함께 읽어라 \cite{lavalle2006,kavraki1996,lavalle2001rrt,kaelbling2011tamp}.}
+{LLM이 plan text를 잘 생성해도 robot execution plan이 되지 않는 이유는 무엇인가?}
+{mug/rack/glass task를 symbolic precondition, motion feasibility, contact constraint, recovery branch로 나누어 plan schema를 작성하라.}
 
 \section{요약}
 
-Imitation learning은 VLA 이전의 낡은 방법이 아니라 VLA의 핵심 학습 기반이다. Behavior cloning은 강력하지만 expert distribution 위에서만 학습한다. 실제 로봇은 learned policy가 만든 상태분포 위에서 움직이므로 covariate shift와 compounding error가 발생한다. 따라서 Real VLA dataset은 성공 demonstration만이 아니라 failure, intervention, correction, recovery, controller metadata를 포함해야 한다. 이 관점이 없으면 VLA fine-tuning은 높은 offline score와 낮은 real rollout success 사이의 간극을 반복하게 된다.
+Planning은 Real VLA에서 과거의 모듈이 아니라 현재의 responsibility layer이다. LLM/VLM/VLA는 plan proposal, affordance scoring, constraint generation, action execution을 강하게 만들 수 있다. 그러나 physical feasibility, collision checking, contact constraint, recovery planning은 여전히 시스템 안에 명시적으로 존재해야 한다. 강한 Real VLA는 end-to-end policy와 planner 중 하나를 선택하는 시스템이 아니라, semantic reasoning과 geometric feasibility를 closed-loop로 연결하는 시스템이다.
 
-다음 장에서는 imitation만으로 충분하지 않을 때 필요한 reward, cost, constraint, exploration의 언어, 즉 reinforcement learning과 optimal control로 넘어간다.
+다음 장에서는 policy를 어떻게 학습하는가로 이동한다. planning이 무엇을 해야 하는지와 어떤 경로가 가능한지를 다룬다면, imitation learning은 실제 trajectory에서 action policy를 어떻게 배우는지 다룬다.

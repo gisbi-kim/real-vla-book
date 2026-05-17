@@ -1,232 +1,253 @@
-\chapter{Robotics Transformer Era}
+\chapter{From Planner + Skills to VLA}
 
 \section*{학습 목표}
 
-이 장은 Robotics Transformer 시대를 VLA의 탄생기로 정리한다. 핵심은 특정 논문 이름을 외우는 것이 아니라, 로봇 action이 transformer의 sequence prediction 문제로 재정의되었다는 점이다. 언어 문장을 token sequence로 보고 다음 token을 예측하듯이, 로봇 trajectory도 observation, language instruction, history가 주어졌을 때 다음 action 또는 action chunk를 예측하는 문제로 볼 수 있다. RT-1, PaLM-E, RT-2, RoboCat은 이 전환을 서로 다른 각도에서 밀어붙인 사례다 \cite{rt12022,palme2023,rt22023,robocat2023}.
+이 장은 planner와 skill library를 결합한 구조가 왜 VLA로 이어졌는지 설명한다. Chapter 11에서는 LLM/VLM이 task를 분해하고, 기존 skill과 controller를 호출하는 구조를 다루었다. 그 구조는 해석 가능하고 안전장치를 붙이기 쉽지만, skill boundary가 너무 단단하면 새로운 행동을 만들기 어렵다. 반대로 end-to-end VLA policy는 perception, language, action을 하나의 mapping으로 학습할 수 있지만, control boundary와 safety 검증을 약화시킬 수 있다.
 
 \begin{enumerate}
-  \item robot policy가 task-specific controller에서 generalist transformer policy로 이동한 배경을 설명한다.
-  \item action tokenization과 multimodal sequence modeling의 의미를 정리한다.
-  \item BC-Z, Gato, RT-1, PaLM-E, RT-2, RoboCat의 기술적 역할을 비교한다.
-  \item 왜 이 흐름이 곧바로 완전한 Real VLA가 아니었는지, 다음 장의 action representation 문제로 연결한다.
+  \item planner+skills 구조의 engineering benefit과 bottleneck을 구분한다.
+  \item skill boundary를 learned policy가 흡수할 때 생기는 장점과 위험을 설명한다.
+  \item skill call, waypoint, action chunk, residual command를 VLA interface spectrum으로 정리한다.
+  \item hierarchical VLA가 pure planning과 pure end-to-end 사이의 실용적 middle ground임을 이해한다.
 \end{enumerate}
 
-\section{전환점: action as sequence prediction}
+\section{Planner + skills 구조의 기본형}
 
-고전적인 로봇 제어에서 action은 controller가 계산하는 입력이다. imitation learning에서는 expert trajectory에서 state-action pair를 모아 policy를 학습한다. Robotics Transformer 시대의 전환은 이 문제를 sequence modeling으로 재해석한 데 있다.
+Planner+skills 시스템은 다음 세 단계로 쓸 수 있다.
 \begin{equation}
-  p_{\theta}(\act_{1:T} \mid \obs_{1:T},\ell)
+  \ell,\obs_t
+  \xrightarrow{M_{\theta}^{plan}}
+  P_t
+  \xrightarrow{\mathrm{Select}}
+  s_t
+  \xrightarrow{\pi_{s_t}}
+  \ctrlcmd_t.
+  \label{eq:planner-skill-basic}
+\end{equation}
+여기서 $\ell$은 language instruction, $P_t$는 plan, $s_t$는 선택된 skill, $\pi_{s_t}$는 skill에 연결된 controller 또는 policy이다. 이 구조의 장점은 module boundary가 분명하다는 것이다. planner가 틀렸는지, skill precondition이 틀렸는지, controller가 실패했는지 분리해서 진단할 수 있다.
+
+또한 이 구조는 data efficiency가 좋다. 로봇이 이미 grasp, place, navigate 같은 skill을 갖고 있으면 LLM/VLM planner는 새로운 task 조합을 비교적 적은 data로 만들 수 있다. 이때 학습 문제는 motor control 전체가 아니라 skill selection과 ordering으로 축소된다.
+\begin{equation}
+  s_t^{\star}
   =
-  \prod_{t=1}^{T}
-  p_{\theta}(\act_t \mid \obs_{\leq t},\act_{<t},\ell).
-  \label{eq:robot-sequence-model}
+  \arg\max_{s_i\in\mathcal{S}}
+  Q_{\theta}(s_i \mid \ell,\bel_t,h_t),
+  \label{eq:skill-selection-q}
 \end{equation}
-이 식은 behavior cloning의 일반화다. 차이는 입력과 출력이 더 이상 작은 vector pair가 아니라 multimodal token sequence가 된다는 점이다.
+여기서 $h_t$는 history이다. 이 식에서 policy의 action space는 $\mathcal{S}$로 제한된다. 이는 장점이자 한계다.
 
-Transformer는 다음과 같은 token 집합을 attention으로 처리한다.
-\begin{equation}
-  X_t
-  =
-  [
-  x^{text}_{1:N},
-  x^{image}_{1:M},
-  x^{state}_{1:R},
-  x^{action}_{<t}
-  ].
-  \label{eq:robot-transformer-tokens}
-\end{equation}
-policy는 이 token sequence에서 action distribution을 예측한다.
-\begin{equation}
-  p_{\theta}(\act_t \mid X_t)
-  =
-  \mathrm{Head}_{act}
-  \left(
-  \mathrm{Transformer}_{\theta}(X_t)
-  \right).
-  \label{eq:robotics-transformer-action-head}
-\end{equation}
-이 구조는 language, vision, proprioception, action history를 하나의 sequence 처리 문제로 묶는다. VLA라는 이름은 여기서 자연스럽게 나온다. vision-language representation이 action head와 연결되기 때문이다.
+\section{Skill boundary의 병목}
 
-\section{Language-conditioned imitation learning}
+Skill library가 강하면 system은 안정적이다. 하지만 skill boundary가 task의 자연스러운 단위를 잘못 자르면 generalization이 막힌다. 예를 들어 ``잡기'' skill이 fixed top-down grasp만 지원한다면, 컵 손잡이, 얇은 천, 투명 용기, partially occluded object에 대해 planner가 아무리 좋은 sequence를 만들어도 실행이 어렵다.
 
-BC-Z류 흐름은 language-conditioned imitation learning이 generalization을 만들 수 있음을 보여주는 초기 단계로 볼 수 있다 \cite{bcz2022}. task id 대신 language instruction이나 video context를 condition으로 넣고, policy가 여러 task를 하나의 parameter set으로 학습한다.
-\begin{equation}
-  \mathcal{L}_{BC}
-  =
-  -
-  \sum_{(\obs_t,\ell,\act_t^{E})\in\mathcal{D}}
-  \log
-  p_{\theta}(\act_t^{E}\mid \obs_t,\ell).
-  \label{eq:language-bc-loss}
-\end{equation}
-이 식은 단순하지만 중요한 의미가 있다. task label이 language로 바뀌면, policy는 task 간 공유 구조를 language embedding을 통해 활용할 수 있다. ``open drawer'', ``close drawer'', ``pick red block'' 같은 명령이 서로 독립된 class가 아니라 text space 안에서 관련성을 갖는다.
-
-그러나 이 단계의 한계도 분명하다. language-conditioned BC는 dataset coverage에 강하게 의존한다. unseen task generalization이 가능하더라도, 그 generalization은 observation distribution, object set, action interface, robot morphology가 크게 바뀌면 약해진다. 이 문제는 이후 RT-1과 RT-2에서 data scale과 model scale의 문제로 다시 등장한다.
-
-\section{Gato와 generalist agent 관점}
-
-Gato류 generalist agent 관점은 하나의 transformer가 서로 다른 modality와 task를 처리할 수 있다는 사고를 강화했다. 여기서 중요한 점은 robot-specific 성능 자체보다 interface 통일이다. text, image, discrete action, continuous value를 token처럼 정리하면 하나의 model family가 여러 domain을 다룰 수 있다.
-\begin{equation}
-  y_{k}
-  \sim
-  p_{\theta}(y_k \mid y_{<k}),
-  \qquad
-  y_k \in \mathcal{V}_{text}\cup\mathcal{V}_{image}\cup\mathcal{V}_{action}.
-  \label{eq:generalist-token-model}
-\end{equation}
-이 관점은 로봇에 직접 적용할 때 곧바로 어려움에 부딪힌다. 로봇 action은 token prediction처럼 보이더라도 physical system에 작용한다. action error는 다음 token의 문법 오류가 아니라 collision, slip, instability로 나타난다. 그럼에도 generalist agent 관점은 VLA 연구에 중요한 질문을 남겼다. 하나의 model이 language understanding, visual recognition, robot control을 같은 sequence modeling framework 안에서 다룰 수 있는가?
-
-\section{RT-1: real robot data와 action token}
-
-RT-1은 Robotics Transformer라는 이름이 보여주듯, real robot manipulation data와 transformer policy를 결합한 대표 사례다 \cite{rt12022}. 핵심은 task diversity, large-scale robot trajectory, language instruction, action tokenization의 결합이다. policy는 observation과 instruction을 입력으로 받아 discretized action을 예측한다.
-\begin{equation}
-  \hat{a}_{t}^{disc}
-  =
-  \arg\max_{a\in\mathcal{A}_{disc}}
-  p_{\theta}(a\mid \obs_{\leq t},\ell).
-  \label{eq:rt1-discrete-action}
-\end{equation}
-discrete action token은 transformer training pipeline과 잘 맞는다. classification head를 붙이고 cross-entropy loss로 학습할 수 있기 때문이다.
-\begin{equation}
-  \mathcal{L}_{act}
-  =
-  -
-  \sum_t
-  \log
-  p_{\theta}(a_t^{disc}\mid \obs_{\leq t},\ell).
-  \label{eq:discrete-action-loss}
-\end{equation}
-
-이 구조는 VLA 관점에서 두 가지 의미가 있다. 첫째, language-conditioned robot policy가 large-scale data와 transformer architecture에서 실제 robot task를 수행할 수 있음을 보였다. 둘째, action representation이 model architecture만큼 중요하다는 사실을 드러냈다. action을 어떻게 discretize할지, time horizon을 어떻게 잡을지, control frequency를 어떻게 맞출지가 policy 성능과 안정성에 직접 영향을 준다.
-
-\section{PaLM-E: embodied multimodal language model}
-
-PaLM-E류 embodied multimodal language model은 language model 내부로 visual observation과 robot state를 넣는 방향을 보여준다 \cite{palme2023}. 이 접근은 robot policy를 단순한 action predictor가 아니라 embodied reasoning system으로 본다.
-\begin{equation}
-  h
-  =
-  \mathrm{LLM}_{\theta}
-  (
-  x^{text},
-  E_{vision}(\obs_t),
-  E_{state}(\conf_t)
-  ).
-  \label{eq:palm-e-embedding}
-\end{equation}
-여기서 $h$는 language response, plan, task-relevant representation, 또는 downstream action module의 입력이 될 수 있다.
-
-이 흐름의 장점은 semantic reasoning이다. 대형 언어모델은 instruction decomposition, commonsense, long-horizon context 유지에 강하다. 하지만 action generation이 직접 연결되지 않으면 Chapter 10의 planner problem으로 돌아간다. 즉 embodied multimodal language model은 VLA의 reasoning backbone이 될 수 있지만, action interface와 control boundary를 별도로 설계해야 한다.
-
-\section{RT-2: action을 token처럼 다루기}
-
-RT-2류 접근은 VLM을 robot action과 결합한 전환점으로 볼 수 있다 \cite{rt22023}. 핵심 아이디어는 web-scale vision-language knowledge를 robot trajectory data와 함께 fine-tune하고, robot action을 text token과 유사한 방식으로 표현하는 것이다.
-\begin{equation}
-  p_{\theta}
-  (y_{1:K}, a_{1:T}^{tok}
-  \mid
-  I,\ell)
-  =
-  \prod_k p_{\theta}(y_k \mid y_{<k},I,\ell)
-  \prod_t p_{\theta}(a_t^{tok}\mid y_{1:K},a_{<t}^{tok},I,\ell).
-  \label{eq:rt2-action-token}
-\end{equation}
-여기서 $y$는 language token, $a^{tok}$는 tokenized robot action이다. 이 구조의 의미는 크다. VLM이 갖고 있는 object, relation, semantic knowledge가 action prediction에 직접 연결될 가능성을 열었기 때문이다.
-
-그러나 action-as-token에는 engineering 한계가 있다. discrete token은 training을 단순하게 만들지만, continuous control의 정밀도와 smoothness를 제한할 수 있다. 또한 token sequence가 길어지면 latency가 증가하고, high-frequency control에는 별도 controller가 필요하다. 따라서 RT-2 이후 연구는 action chunking, diffusion, flow matching, continuous action expert, efficient fine-tuning으로 확장된다. 이 내용은 Chapter 13에서 본격적으로 다룬다.
-
-\section{RoboCat과 multi-embodiment adaptation}
-
-RoboCat류 흐름은 multi-task, multi-embodiment, visual goal-conditioned policy, adaptation loop를 강조한다 \cite{robocat2023}. VLA에서 중요한 질문은 하나의 robot에서 많은 task를 하는 것만이 아니다. 다른 robot morphology, 다른 camera, 다른 object distribution으로 policy를 옮길 수 있는가가 중요하다.
-\begin{equation}
-  \pi_{\theta}
-  :
-  (\obs_t,\ell,e)
-  \mapsto
-  \act_t,
-  \qquad
-  e\in\mathcal{E}_{embodiment}.
-  \label{eq:multi-embodiment-policy}
-\end{equation}
-여기서 $e$는 embodiment descriptor이다. robot이 바뀌면 action space, kinematics, camera geometry, controller dynamics가 바뀐다. 따라서 multi-embodiment policy는 단순한 multi-task policy보다 어렵다.
-
-adaptation loop는 다음 형태로 볼 수 있다.
-\begin{equation}
-  \mathcal{D}_{k+1}
-  =
-  \mathcal{D}_{k}
-  \cup
-  \mathrm{Collect}
-  (
-  \pi_{\theta_k},\mathcal{T}_{new},\mathcal{E}_{new}
-  ),
-  \qquad
-  \theta_{k+1}
-  =
-  \mathrm{Train}(\mathcal{D}_{k+1}).
-  \label{eq:adaptation-loop}
-\end{equation}
-이 식은 data engine의 시작점이다. VLA는 model architecture만으로 성장하지 않는다. deployment, failure collection, retraining, evaluation loop가 함께 있어야 한다.
-
-\section{Robotics Transformer 계열 비교}
+Skill boundary의 병목은 세 가지로 나타난다.
+\begin{align}
+  \mathcal{B}_{coverage}
+  &= \mathbb{I}[\exists s_i\in\mathcal{S}: s_i \text{ can express the required behavior}], \\
+  \mathcal{B}_{parameter}
+  &= \mathbb{I}[\exists \alpha_i: \pi_{s_i}(\alpha_i,\bel_t) \text{ succeeds}], \\
+  \mathcal{B}_{feedback}
+  &= \mathbb{I}[\text{skill exposes enough intermediate feedback}].
+  \label{eq:skill-bottlenecks}
+\end{align}
+첫 번째는 필요한 행동이 skill set에 있는가의 문제다. 두 번째는 skill은 있지만 parameterization이 충분한가의 문제다. 세 번째는 skill 내부 상태가 planner나 monitor에 충분히 노출되는가의 문제다.
 
 \begin{table}[h]
   \centering
-  \caption{Robotics Transformer 시대의 주요 흐름}
-  \begin{tabularx}{\linewidth}{p{0.16\linewidth}X X}
+  \caption{Skill boundary가 만드는 trade-off}
+  \begin{tabularx}{\linewidth}{p{0.22\linewidth}X X}
     \toprule
-    흐름 & 핵심 기여 & Real VLA 관점의 한계 \\
+    Boundary choice & 장점 & 병목 \\
     \midrule
-    BC-Z & language/video-conditioned imitation learning과 unseen task generalization & dataset coverage와 robot/domain shift에 민감하다 \\
-    Gato & 하나의 transformer로 여러 modality/task를 다루는 generalist agent 관점 & physical execution과 safety boundary가 약하다 \\
-    RT-1 & real robot data, task diversity, transformer action policy & action discretization과 data scale에 의존한다 \\
-    PaLM-E & embodied multimodal language model과 state/image/text 결합 & action generation과 controller interface는 별도 설계가 필요하다 \\
-    RT-2 & VLM knowledge와 robot action token을 결합한 VLA 전환점 & continuous/dexterous control, latency, action precision 문제가 남는다 \\
-    RoboCat & multi-task, multi-embodiment adaptation과 data loop & embodiment transfer와 evaluation protocol이 어렵다 \\
+    Coarse skill & 안전 검증과 reuse가 쉽다 & 새로운 contact mode와 세밀한 조작이 어렵다 \\
+    Fine skill & 조합성이 좋아진다 & long-horizon planning과 error accumulation이 커진다 \\
+    Parameterized skill & 기존 controller를 유지하면서 task variation을 처리한다 & parameter space가 커지면 planner가 사실상 control 문제를 푼다 \\
+    Learned skill & data에서 motion pattern을 흡수한다 & 실패 원인과 safety certificate가 불명확해질 수 있다 \\
     \bottomrule
   \end{tabularx}
-  \label{tab:robotics-transformer-era}
+  \label{tab:skill-boundary-tradeoff}
 \end{table}
 
-이 표에서 보듯 Robotics Transformer 시대의 성과는 ``transformer를 로봇에 적용했다'' 정도로 요약하면 부족하다. 더 정확한 요약은 다음과 같다. robot policy가 language-conditioned, multimodal, scalable sequence model로 재정의되었다.
+Real VLA 관점에서 중요한 질문은 ``skill을 쓸 것인가 말 것인가''가 아니다. 어떤 boundary를 고정하고, 어떤 boundary를 학습할 것인가이다.
 
-\section{왜 이것이 Real VLA의 시작인가}
+\section{VLA가 흡수하는 responsibility}
 
-VLA를 다음 mapping으로 쓰자.
+VLA는 language와 observation에서 robot action을 바로 예측하는 방향으로 skill boundary의 일부를 흡수한다.
 \begin{equation}
   \act_t
   =
-  \pi_{\theta}
-  (\obs_t,\ell,h_t).
-  \label{eq:vla-short-map}
+  \pi_{\theta}(\ell,\obs_{\leq t},\conf_t).
+  \label{eq:vla-policy-direct}
 \end{equation}
-Robotics Transformer 시대는 이 mapping을 large-scale transformer로 학습할 수 있다는 가능성을 열었다. 하지만 Real VLA는 이 식 하나로 끝나지 않는다. 실제 시스템은 action representation, controller interface, data engine, evaluation, safety monitor를 필요로 한다.
+이 식은 planner+skills 구조와 다르게 skill name을 명시적으로 거치지 않는다. 대신 policy 내부 representation이 object, relation, subgoal, motion primitive를 latent하게 표현할 수 있다.
 
-따라서 이 시대는 첫 번째 완성형이면서 동시에 두 번째 문제 제기의 출발점이다. RT-1/RT-2 계열은 VLA를 가능하게 했지만, 다음 질문들을 남겼다.
+하지만 모든 responsibility가 하나의 neural network 안으로 사라지는 것은 아니다. 실제 system에서는 VLA output을 다음 중 하나의 interface로 제한한다.
+\begin{equation}
+  \act_t
+  \in
+  \{\mathrm{skill\ call},\mathrm{waypoint},\mathrm{delta\ pose},
+  \mathrm{action\ chunk},\mathrm{joint\ command},\mathrm{residual}\}.
+  \label{eq:vla-interface-set}
+\end{equation}
+각 interface는 control boundary를 다르게 만든다. skill call은 planner+skills에 가깝고, joint command는 end-to-end control에 가깝다. waypoint와 action chunk는 중간 지점이다.
+
+\section{Interface spectrum}
+
+Planner+skills에서 VLA로 넘어가는 과정을 하나의 spectrum으로 보자.
+\begin{equation}
+  \mathcal{I}
+  =
+  \{\mathcal{I}_{symbolic},
+  \mathcal{I}_{skill},
+  \mathcal{I}_{waypoint},
+  \mathcal{I}_{chunk},
+  \mathcal{I}_{lowlevel}\}.
+  \label{eq:interface-spectrum}
+\end{equation}
+
+\begin{table}[h]
+  \centering
+  \caption{Planner+skills와 VLA 사이의 action interface}
+  \begin{tabularx}{\linewidth}{p{0.2\linewidth}X X}
+    \toprule
+    Interface & Output & Engineering implication \\
+    \midrule
+    Symbolic plan & subgoal sequence, object relation & interpretability는 높지만 executability gap이 크다 \\
+    Skill call & skill id, arguments & 안전하고 재사용 가능하나 skill coverage에 묶인다 \\
+    Waypoint & end-effector pose, target pose & motion planner와 결합하기 쉽고 controller boundary가 남는다 \\
+    Action chunk & short horizon action sequence & visuomotor smoothness를 학습하지만 latency와 stability를 관리해야 한다 \\
+    Low-level command & joint velocity, torque, gripper command & 표현력은 크지만 safety와 transfer가 어렵다 \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:interface-spectrum}
+\end{table}
+
+이 표는 VLA 논문을 읽을 때 가장 먼저 확인해야 하는 항목이다. 같은 VLA라는 이름을 쓰더라도 action interface가 다르면 학습 난이도, 필요한 data, safety checker, controller integration이 모두 달라진다.
+
+\section{Latent skill과 hierarchical policy}
+
+Planner+skills 구조에서 skill은 사람이 정의한 discrete object였다. VLA로 넘어가면 skill이 latent variable로 바뀔 수 있다.
+\begin{align}
+  z_t &\sim p_{\theta}(z_t \mid \ell,\obs_t,h_t), \\
+  \act_{t:t+H} &\sim p_{\phi}(\act_{t:t+H} \mid z_t,\obs_t,\conf_t).
+  \label{eq:latent-skill}
+\end{align}
+여기서 $z_t$는 explicit skill id가 아니라 learned latent skill이다. 이 구조는 skill library의 coverage 병목을 줄일 수 있다. data가 충분하면 latent skill은 사람이 이름 붙이지 않은 motion pattern도 표현할 수 있다.
+
+하지만 latent skill은 검증이 어렵다. explicit skill은 precondition과 termination condition을 붙일 수 있지만, latent variable은 의미가 불명확할 수 있다. 따라서 hierarchical VLA는 보통 두 가지 장치를 함께 둔다.
+\begin{equation}
+  \begin{aligned}
+  z_t &= H_{\theta}(\ell,\obs_t,h_t), \\
+  \act_t &= L_{\phi}(z_t,\obs_t,\conf_t), \\
+  \mathrm{allow}_t &= S_{\eta}(z_t,\act_t,\bel_t,\conf_t).
+  \end{aligned}
+  \label{eq:hierarchical-vla-safety}
+\end{equation}
+$H_{\theta}$는 high-level reasoning, $L_{\phi}$는 low-level action generation, $S_{\eta}$는 safety gate이다. 이 구조는 Chapter 18의 hierarchical VLA와 직접 연결된다.
+
+\section{Residual VLA}
+
+Planner+skills와 end-to-end VLA 사이의 실용적인 중간 형태는 residual command이다. 기존 controller가 nominal command를 만들고, learned policy가 보정항을 더한다.
+\begin{equation}
+  \ctrlcmd_t
+  =
+  \ctrlcmd_t^{base}
+  +
+  \Delta \ctrlcmd_t^{vla},
+  \qquad
+  \Delta \ctrlcmd_t^{vla}
+  =
+  f_{\theta}(\ell,\obs_t,\bel_t).
+  \label{eq:residual-vla}
+\end{equation}
+이 구조는 classical control의 안정성을 유지하면서 perception-language 조건을 반영할 수 있다. 예를 들어 nominal trajectory는 motion planner가 만들고, VLA는 grasp approach angle, contact timing, local correction을 보정한다.
+
+Residual 구조의 위험은 learned residual이 base controller의 안정성 가정을 깨는 것이다. 따라서 residual은 norm bound, frequency bound, safety projection을 가져야 한다.
+\begin{equation}
+  \Delta \ctrlcmd_t^{safe}
+  =
+  \Pi_{\mathcal{U}_{safe}}
+  \left(\Delta \ctrlcmd_t^{vla}\right),
+  \qquad
+  \|\Delta \ctrlcmd_t^{safe}\| \leq \epsilon.
+  \label{eq:residual-projection}
+\end{equation}
+이런 형태는 Real VLA에서 중요하다. learned model을 쓰되, controller와 safety boundary를 완전히 버리지 않는다.
+
+\section{Closed-loop feedback의 위치 변화}
+
+Planner+skills 구조에서는 feedback이 주로 planner 밖에서 처리된다. skill이 실패하면 monitor가 report를 만들고, planner가 다음 skill을 다시 고른다.
+\begin{equation}
+  h_{t+1}
+  =
+  \mathrm{Update}(h_t,r_t,e_t).
+  \label{eq:external-feedback-update}
+\end{equation}
+VLA에서는 feedback의 일부가 policy 내부 observation history로 들어간다.
+\begin{equation}
+  \act_t
+  =
+  \pi_{\theta}(\ell,\obs_{t-L:t},\act_{t-L:t-1}).
+  \label{eq:vla-feedback-history}
+\end{equation}
+이 변화는 중요하다. policy가 실패 징후를 직접 보고 local correction을 할 수 있기 때문이다. 그러나 history를 넣는 것만으로 recovery가 보장되지는 않는다. policy가 failure mode를 학습하려면 dataset에 실패, correction, recovery가 포함되어야 한다.
+
+따라서 VLA data engine은 success trajectory만 모아서는 부족하다.
+\begin{equation}
+  \mathcal{D}
+  =
+  \mathcal{D}_{success}
+  \cup
+  \mathcal{D}_{failure}
+  \cup
+  \mathcal{D}_{correction}
+  \cup
+  \mathcal{D}_{intervention}.
+  \label{eq:vla-data-mixture}
+\end{equation}
+이 식은 Chapter 15의 data engine과 연결된다. VLA가 planner+skills의 robustness를 넘어서려면 실패와 개입을 학습해야 한다.
+
+\section{Middle ground로서의 hierarchical VLA}
+
+Pure planning과 pure end-to-end policy는 양극단이다. 실제 로봇 시스템에서는 다음 objective가 동시에 필요하다.
+\begin{equation}
+  \max_{\theta,\phi}
+  \quad
+  J_{task}
+  -
+  \lambda_1 J_{unsafe}
+  -
+  \lambda_2 J_{latency}
+  -
+  \lambda_3 J_{uninterpretable}.
+  \label{eq:vla-system-objective}
+\end{equation}
+이 objective에서 task success만 최적화하면 unsafe behavior가 생길 수 있고, interpretability만 중시하면 skill boundary가 너무 rigid해진다. hierarchical VLA는 이 trade-off를 조절한다.
+
+\begin{tcolorbox}[title={Design principle: choose the learning boundary}]
+Real VLA 설계에서 핵심 결정은 model size보다 learning boundary이다. 어떤 판단을 LLM/VLM planner에 맡길지, 어떤 motion을 learned action head에 맡길지, 어떤 constraint를 controller와 safety monitor에 고정할지 먼저 정해야 한다.
+\end{tcolorbox}
+
+\section{VLA로 넘어가는 조건}
+
+Planner+skills에서 VLA로 넘어갈 필요가 생기는 조건은 비교적 분명하다.
 \begin{enumerate}
-  \item action을 discrete token으로 둘 것인가, continuous vector로 둘 것인가?
-  \item 한 시점 action을 예측할 것인가, action chunk를 예측할 것인가?
-  \item deterministic head를 쓸 것인가, distributional generator를 쓸 것인가?
-  \item controller가 추적할 reference를 낼 것인가, hardware에 가까운 command를 낼 것인가?
-  \item web-scale semantic prior가 physical skill로 전이되는 범위는 어디까지인가?
+  \item task variation이 skill library의 coverage를 넘어선다.
+  \item perception과 action 사이의 fine-grained coupling이 중요하다.
+  \item contact나 deformation처럼 symbolic subgoal로 표현하기 어려운 dynamics가 많다.
+  \item long-horizon task에서 skill 사이의 error accumulation이 커진다.
+  \item data가 충분해서 end-to-end 또는 hierarchical policy를 학습할 수 있다.
 \end{enumerate}
 
-\section{2024--2025 흐름으로 이어지는 질문}
-
-RT-2 이후의 중요한 변화는 ``VLA를 만들 수 있다''에서 ``어떤 action interface와 fine-tuning recipe가 실제 robot에서 빠르고 안전한가''로 질문이 이동했다는 점이다. OpenVLA는 open-source 7B VLA와 대규모 real-world robot demonstrations를 통해 VLA 연구의 재현 가능한 기준점을 제공했다 \cite{openvla2024}. 그러나 open model 자체가 deployment-ready interface를 보장하지는 않는다.
-
-OpenVLA-OFT는 같은 OpenVLA 계열에서도 action decoding, continuous action representation, action chunking, objective 선택이 fine-tuning 효율과 inference throughput에 큰 영향을 준다는 점을 보여준다 \cite{openvlaoft2025}. FAST는 action tokenization을 단순한 binning이 아니라 high-frequency robot action sequence를 압축하고 복원하는 문제로 재정의한다 \cite{fast2025}. $\pi_0$와 $\pi_{0.5}$는 pretrained VLM 위에 flow-based action generation과 heterogeneous co-training을 결합하여, action expert와 data mixture가 VLA generalization의 핵심 축임을 보여준다 \cite{pi02024,pi052025}.
-
-\begin{warningbox}{이 장을 읽을 때의 critical reading point}
-Robotics Transformer 계열을 읽을 때는 backbone 이름보다 action이 어떤 representation으로 기록되고, 어떤 controller interface로 실행되며, evaluation이 어떤 embodiment와 data split에서 이루어졌는지를 먼저 확인해야 한다. 최신 VLA 논문의 차이는 종종 architecture block 하나가 아니라 action tokenizer, chunk horizon, fine-tuning objective, data mixture, latency budget에 있다.
-\end{warningbox}
+반대로 모든 문제를 VLA로 바꿀 필요는 없다. stable pick-place, fixture가 잘 정의된 industrial task, safety-critical constrained motion은 explicit controller와 verified planner가 여전히 유리할 수 있다. Real VLA는 기존 robotics를 대체하는 이름이 아니라, 기존 robotics boundary를 학습 가능한 representation과 결합하는 설계 방식이다 \cite{saycan2022,codeaspolicies2022,rt12022}.
 
 \chapterwork
-{BC-Z, Gato, RT-1, PaLM-E, RT-2, RoboCat을 history가 아니라 interface evolution으로 읽어라 \cite{bcz2022,gato2022,rt12022,palme2023,rt22023,robocat2023}.}
-{Robotics Transformer 시대가 VLA를 가능하게 했지만 Real VLA를 완성하지는 못한 이유는 무엇인가?}
-{RT-1, RT-2, OpenVLA 중 하나를 골라 input, action, controller, data, evaluation evidence를 Chapter 0 기준으로 분해하라.}
+{Planner+skills 구조와 RT-1 이후의 action-producing transformer 구조를 비교해서 읽어라 \cite{saycan2022,rt12022}.}
+{skill library가 너무 강하면 generalization이 막히고, end-to-end policy가 너무 강하면 safety/control boundary가 약해지는 이유는 무엇인가?}
+{기존 skill library가 있는 robot에 VLA policy를 추가한다고 가정하고, 어떤 boundary를 학습하고 어떤 boundary를 유지할지 표로 정리하라.}
 
 \section{요약}
 
-Robotics Transformer 시대는 VLA의 역사에서 결정적이다. BC-Z는 language-conditioned imitation learning의 generalization 가능성을 보였고, Gato는 single transformer generalist agent 관점을 확산시켰다. RT-1은 real robot data와 transformer policy를 결합했고, PaLM-E는 embodied multimodal language model의 방향을 제시했다. RT-2는 VLM과 robot action token을 결합해 VLA라는 문제 설정을 선명하게 만들었고, RoboCat은 multi-task/multi-embodiment adaptation과 data loop를 강조했다.
+Planner+skills 구조는 VLA의 전 단계이면서 동시에 현대 VLA 시스템의 일부로 남아 있다. 이 구조는 해석 가능성, safety gate, controller reuse라는 장점이 있지만, skill coverage, parameterization, feedback exposure에서 병목을 만든다. VLA는 이 병목의 일부를 learned policy로 흡수한다. 그러나 모든 것을 end-to-end로 밀어 넣으면 system diagnosis와 safety assurance가 어려워진다.
 
-하지만 이 장의 결론은 Robotics Transformer가 모든 문제를 해결했다는 것이 아니다. 오히려 이 시기 이후 가장 중요한 질문은 action representation으로 이동한다. action을 어떤 형식으로 표현하느냐가 control boundary, latency, dexterity, safety, data efficiency를 결정한다. 다음 장은 이 책의 기술적 중심부인 action representation으로 들어간다.
+따라서 planner+skills에서 VLA로의 전환은 단순한 model replacement가 아니다. action interface와 learning boundary를 재설계하는 문제다. 다음 장에서는 이 전환이 실제로 Robotics Transformer 계열에서 어떻게 나타났는지, robot action이 sequence prediction과 token prediction 문제로 재정의된 과정을 다룬다.

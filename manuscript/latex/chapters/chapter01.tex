@@ -309,7 +309,7 @@ Human & 사람이 중단하거나 인계받을 수 있는가? & intervention pat
   \item Data/evaluation layer: evidence와 metric, failure taxonomy를 정의하는 layer.
 \end{itemize}
 
-후속 장은 이 vocabulary를 바탕으로 전개된다. Chapter 13은 action representation과 control interface를 다룬다. Chapter 14는 robot data engine을 다룬다. Chapter 16은 evaluation protocol을 다룬다. Chapter 19는 safety, assurance, deployment를 다룬다.
+후속 장은 이 vocabulary를 바탕으로 전개된다. Chapter 14는 action representation과 control interface를 다룬다. Chapter 15는 robot data engine을 다룬다. Chapter 17은 evaluation protocol을 다룬다. Chapter 20은 safety, assurance, deployment를 다룬다.
 
 \begin{figure}[ht]
 \centering
@@ -320,10 +320,10 @@ Human & 사람이 중단하거나 인계받을 수 있는가? & intervention pat
   arrow/.style={-Latex, thick, draw=rvlaBlue}
 ]
 \node[root] (ch1) {Chapter 1: Real VLA as embodied system stack};
-\node[child, below=of ch1] (ch13) {Chapter 13: Action representations and control interfaces\\What is $\act_t$? How does $\act_t$ become $\ctrlcmd_t$?};
-\node[child, below=of ch13] (ch14) {Chapter 14: Data engines\\What does a robot trajectory record?};
-\node[child, below=of ch14] (ch16) {Chapter 16: Evaluation protocols\\What does benchmark success mean?};
-\node[child, below=of ch16] (ch19) {Chapter 19: Safety, assurance, deployment\\Where are the safety gates?};
+\node[child, below=of ch1] (ch13) {Chapter 14: Action representations and control interfaces\\What is $\act_t$? How does $\act_t$ become $\ctrlcmd_t$?};
+\node[child, below=of ch13] (ch14) {Chapter 15: Data engines\\What does a robot trajectory record?};
+\node[child, below=of ch14] (ch16) {Chapter 17: Evaluation protocols\\What does benchmark success mean?};
+\node[child, below=of ch16] (ch19) {Chapter 20: Safety, assurance, deployment\\Where are the safety gates?};
 \draw[arrow] (ch1) -- (ch13);
 \draw[arrow] (ch13) -- (ch14);
 \draw[arrow] (ch14) -- (ch16);

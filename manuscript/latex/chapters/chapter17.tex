@@ -1,391 +1,275 @@
-\chapter[Hierarchical VLA and Embodied Reasoning]{Hierarchical VLA and\\Embodied Reasoning}
+\chapter{Evaluation and Benchmarking}
 
 \section*{학습 목표}
 
-이 장은 Real VLA를 단일 거대 policy가 아니라 여러 시간 척도와 책임 경계를 가진 계층형 system으로 본다. 상위 layer는 장면과 명령을 해석하고, task를 subgoal로 나누고, 진행 상황과 실패를 판단한다. 하위 VLA policy는 주어진 subgoal 또는 instruction에 대해 action chunk, waypoint, trajectory를 생성한다. controller와 safety monitor는 물리적 실행을 안정화하고 제한한다.
+이 장은 VLA 평가의 evidence standard를 정의한다. 로봇이 task를 성공했다는 말은 생각보다 복잡하다. 한 번 성공했는가, 여러 초기조건에서 성공했는가, 실패했을 때 안전하게 멈췄는가, 사람 개입 없이 성공했는가, latency와 controller tracking은 괜찮았는가? Benchmark score는 capability의 증거이지만 capability 자체는 아니다.
 
 \begin{enumerate}
-  \item embodied reasoning layer의 역할과 출력 형식을 정의한다.
-  \item hierarchical policy를 options와 belief-state 관점에서 정식화한다.
-  \item reasoning layer, VLA policy, controller, safety monitor 사이의 interface contract를 설계한다.
-  \item progress detection, success estimation, replanning trigger를 평가 가능한 형태로 만든다.
+  \item success rate가 숨기는 failure type과 deployment cost를 설명한다.
+  \item benchmark family와 real-robot protocol을 구분한다.
+  \item action representation별 추가 평가 지표를 정의한다.
+  \item reproducibility, benchmark artifact, statistical confidence를 평가 설계에 포함한다.
 \end{enumerate}
 
-\section{Why hierarchy returns}
+\section{Why success rate is not enough}
 
-초기 VLA 논의는 end-to-end policy의 가능성을 강조했다. 관측과 언어를 넣으면 action이 직접 나오는 구조는 data가 충분하고 task horizon이 짧을 때 강력하다 \cite{rt12022,openvla2024,pi02024}.
+가장 흔한 metric은 success rate이다.
 \begin{equation}
-  \act_t
-  \sim
-  \pi_{\theta}
-  (\cdot \mid \obs_{\leq t}, \ell).
-  \label{eq:ch17-monolithic-policy}
-\end{equation}
-그러나 실제 배치에 가까운 task에서는 이 단순한 interface만으로 부족한 경우가 많다. 이유는 네 가지다.
-\begin{enumerate}
-  \item task horizon이 길어질수록 action error보다 subgoal error가 더 중요해진다.
-  \item safety constraint는 policy 내부의 implicit preference가 아니라 외부에서 검증 가능한 조건이어야 한다.
-  \item reasoning과 action generation은 요구하는 시간 척도와 compute budget이 다르다.
-  \item 실패 후 복구는 단순 next action prediction이 아니라 상태 재해석과 계획 수정이 필요하다.
-\end{enumerate}
-
-따라서 real deployment에서는 다음 구조가 자연스럽다.
-\begin{equation}
-  z_t
+  R_{success}
   =
-  \rho_{\psi}
-  (\ell, \obs_{\leq t}, \bel_t, m_t),
-  \qquad
-  \act_{t:t+H-1}
-  \sim
-  \pi_{\theta}
-  (\cdot \mid \obs_{\leq t}, z_t, \conf_t).
-  \label{eq:ch17-reasoning-vla}
+  \frac{1}{N}
+  \sum_{i=1}^{N}
+  \mathbb{I}[y_i=\mathrm{success}].
+  \label{eq:ch16-success-rate}
 \end{equation}
-여기서 $\rho_{\psi}$는 embodied reasoning layer, $z_t$는 subgoal, constraint, success criterion, tool call, recovery instruction을 포함하는 중간 표현이다. 하위 VLA는 $z_t$를 실행 가능한 action sequence로 변환한다.
+이 지표는 필요하지만 충분하지 않다. 같은 success rate라도 실패 양상, 개입 횟수, 충돌 위험, latency, recovery ability가 다를 수 있다.
 
-\begin{definitionbox}{Hierarchical VLA}
-Hierarchical VLA는 language-conditioned reasoning layer와 action-generating VLA policy를 분리하되, 두 layer가 동일한 관측, task context, progress state를 공유하도록 설계한 robot policy stack이다. 핵심은 모듈을 많이 나누는 것이 아니라 각 layer의 책임과 출력 검증 조건을 명확히 하는 것이다.
-\end{definitionbox}
-
-\section{Embodied reasoning is not text reasoning}
-
-LLM의 text reasoning은 문장 사이의 논리 관계를 다룬다. embodied reasoning은 물리 세계 안에서 실행될 action의 조건을 다룬다. 같은 명령이라도 robot embodiment, object pose, gripper state, scene constraint에 따라 의미가 달라진다.
-
-명령 $\ell$이 주어졌을 때 embodied reasoning layer가 추정해야 할 변수는 다음과 같이 쓸 수 있다.
+Real VLA 평가에서는 최소한 다음 vector를 함께 봐야 한다.
 \begin{equation}
-  r_t
+  \begin{aligned}
+  M
   =
-  (
-  g_t,
-  c_t,
-  \sigma_t,
-  q_t,
-  \eta_t
+  (&
+  R_{success},
+  R_{failure\ type},
+  R_{intervention},
+  R_{unsafe},\\
+  &
+  T_{completion},
+  T_{infer},
+  E_{tracking},
+  R_{recovery}
   ).
-  \label{eq:ch17-reasoning-state}
+  \end{aligned}
+  \label{eq:ch16-metric-vector}
 \end{equation}
-여기서 $g_t$는 현재 subgoal, $c_t$는 constraint set, $\sigma_t$는 success criterion, $q_t$는 필요한 clarification 또는 perception query, $\eta_t$는 recovery mode이다.
+success rate 하나만 보고 model을 비교하면, benchmark에서 빠르게 성공하지만 실제 배치에서는 위험한 policy를 좋은 policy로 오해할 수 있다.
+
+\section{Benchmark families}
+
+Benchmark는 모두 같은 역할을 하지 않는다. 일부는 language-conditioned long-horizon manipulation을 본다. 일부는 lifelong learning, simulation coverage, open-vocabulary instruction, real-robot robustness를 본다.
 
 \begin{table}[h]
   \centering
-  \caption{Embodied reasoning의 주요 출력}
-  \begin{tabularx}{\linewidth}{p{0.22\linewidth}X X}
-    \toprule
-    Output & 의미 & 예시 \\
-    \midrule
-    Subgoal $g_t$ & 현재 실행해야 할 물리 목표 & 컵을 오른쪽 gripper workspace 안으로 이동 \\
-    Constraint $c_t$ & 실행 중 지켜야 할 조건 & 칼날 방향 회피, 사람 근처 속도 제한 \\
-    Success criterion $\sigma_t$ & subgoal 완료 판정 조건 & object centroid가 bin 내부이고 gripper가 열림 \\
-    Query $q_t$ & 추가 관측 또는 사람 질문 & 가려진 물체 확인, ambiguous instruction 확인 \\
-    Recovery mode $\eta_t$ & 실패 후 전환할 행동 범주 & regrasp, re-detect, ask, abort \\
-    \bottomrule
-  \end{tabularx}
-  \label{tab:ch17-er-output}
-\end{table}
-
-중요한 점은 reasoning output이 자연어 설명으로 끝나면 안 된다는 것이다. 하위 VLA와 controller가 사용할 수 있는 contract로 내려와야 한다. 예를 들어 ``파란 컵을 집어라''는 문장은 robot stack 내부에서 object id, target pose distribution, allowed approach direction, gripper command convention, success predicate로 변환되어야 한다.
-
-\section{Options view of hierarchical VLA}
-
-계층형 VLA는 options framework로 정식화할 수 있다. 상위 policy는 option $\omega_t$를 선택하고, 하위 policy는 선택된 option 아래에서 action을 생성한다.
-\begin{equation}
-  \omega_t
-  \sim
-  \mu_{\psi}
-  (\cdot \mid \bel_t, \ell),
-  \qquad
-  \act_t
-  \sim
-  \pi_{\theta}
-  (\cdot \mid \obs_t, \omega_t).
-  \label{eq:ch17-option-policy}
-\end{equation}
-option은 단순 skill 이름일 수도 있고, continuous subgoal, constraint set, language instruction을 함께 가진 구조화된 object일 수도 있다.
-
-각 option은 termination model을 갖는다.
-\begin{equation}
-  \beta_{\omega}(\bel_t)
-  =
-  P(\mathrm{terminate}=1 \mid \bel_t,\omega).
-  \label{eq:ch17-option-termination}
-\end{equation}
-termination은 성공뿐 아니라 실패, unsafe condition, ambiguity, timeout도 포함한다. 따라서 hierarchical VLA의 상위 loop는 다음과 같이 쓸 수 있다.
-\begin{equation}
-  \omega_{t+1}
-  =
-  \begin{cases}
-  \mu_{\psi}(\bel_t,\ell) & \text{if } \beta_{\omega_t}(\bel_t)=1, \\
-  \omega_t & \text{otherwise.}
-  \end{cases}
-  \label{eq:ch17-option-loop}
-\end{equation}
-
-이 관점은 VLA를 classical skill library로 되돌리는 것이 아니다. option 내부의 하위 policy가 여전히 visuomotor foundation model일 수 있고, option 자체도 language-conditioned reasoning model이 생성할 수 있다. 차이는 action prediction을 무한히 길게 늘리는 대신, 긴 horizon을 검증 가능한 subproblem으로 나누는 데 있다.
-
-\section{Interface contract between reasoning and VLA}
-
-계층 구조가 잘 작동하려면 layer 사이의 interface가 느슨한 자연어 prompt가 아니라 typed contract에 가까워야 한다. 한 time step에서 reasoning layer가 VLA에 전달하는 command를 다음 tuple로 정의하자.
-\begin{equation}
-  z_t
-  =
-  (
-  \ell_t^{sub},
-  \mathcal{O}_t,
-  \mathcal{G}_t,
-  \mathcal{C}_t,
-  \Sigma_t,
-  H_t
-  ).
-  \label{eq:ch17-command-contract}
-\end{equation}
-여기서 $\ell_t^{sub}$는 sub-instruction, $\mathcal{O}_t$는 relevant object set, $\mathcal{G}_t$는 target geometry 또는 pose distribution, $\mathcal{C}_t$는 constraint, $\Sigma_t$는 success predicate, $H_t$는 action horizon이다.
-
-\begin{table}[h]
-  \centering
-  \caption{Reasoning--VLA interface contract}
-  \begin{tabularx}{\linewidth}{p{0.22\linewidth}X X}
-    \toprule
-    Field & 필요 이유 & 검증 방법 \\
-    \midrule
-    Sub-instruction & 하위 policy의 local objective 지정 & instruction grounding check \\
-    Object set & attention과 affordance 범위 제한 & detector id, mask, pose confidence \\
-    Geometry & motion target 또는 relation 지정 & frame convention, pose covariance \\
-    Constraint & collision, force, human proximity 제한 & safety monitor predicate \\
-    Success predicate & option termination 조건 제공 & state estimator 또는 verifier \\
-    Horizon & action chunk 길이와 interruptibility 결정 & latency budget, override test \\
-    \bottomrule
-  \end{tabularx}
-  \label{tab:ch17-contract}
-\end{table}
-
-contract가 없으면 상위 model은 그럴듯한 subgoal을 말하고, 하위 VLA는 그 subgoal을 다르게 해석하며, controller는 불가능한 target을 받는다. 이 mismatch는 성능 문제가 아니라 system integration 문제다.
-
-\section{Progress detection and success estimation}
-
-long-horizon task에서 핵심은 다음 action보다 progress state이다. progress를 scalar로만 두면 불충분하다. subgoal별 completion, constraint violation, uncertainty, recovery need를 함께 추정해야 한다.
-\begin{equation}
-  p_t
-  =
-  \chi_{\xi}
-  (\obs_{\leq t}, z_t, \tau_{0:t})
-  =
-  (
-  P_{done},
-  P_{fail},
-  P_{unsafe},
-  U_{state},
-  U_{intent}
-  ).
-  \label{eq:ch17-progress-state}
-\end{equation}
-여기서 $\chi_{\xi}$는 progress detector 또는 verifier이다. $U_{state}$는 state uncertainty, $U_{intent}$는 instruction ambiguity를 나타낸다.
-
-replanning trigger는 다음 조건으로 정의할 수 있다.
-\begin{equation}
-  \mathrm{replan}_t
-  =
-  \mathbb{I}
-  [
-  P_{done} > \alpha
-  \vee
-  P_{fail} > \gamma
-  \vee
-  P_{unsafe} > \delta
-  \vee
-  U_{state} > \epsilon
-  \vee
-  t-t_0 > T_{\max}
-  ].
-  \label{eq:ch17-replan-trigger}
-\end{equation}
-이 식은 중요한 engineering principle을 말한다. reasoning은 매 step마다 반드시 호출될 필요가 없다. 그러나 완료, 실패, 위험, 불확실성, timeout이 감지되면 상위 layer가 다시 개입해야 한다.
-
-\section{VLA plus TAMP}
-
-Task and Motion Planning은 symbolic precondition과 geometric feasibility를 함께 다룬다. VLA와 TAMP를 결합할 때 TAMP는 반드시 모든 action을 결정하는 central planner일 필요가 없다. 세 가지 역할이 가능하다.
-
-\begin{enumerate}
-  \item 상위 reasoning이 symbolic subgoal sequence를 만들고, TAMP가 feasibility를 검증한다.
-  \item TAMP가 candidate plan skeleton을 만들고, VLA가 각 step의 visual execution을 담당한다.
-  \item VLA가 proposed action을 만들고, TAMP 또는 geometric checker가 constraint violation을 걸러낸다.
-\end{enumerate}
-
-이를 optimization 형태로 쓰면 다음과 같다.
-\begin{equation}
-  \max_{\omega_{0:K}, \act_{0:T}}
-  \mathbb{E}
-  \left[
-  \sum_{t=0}^{T} r(\state_t,\act_t,\ell)
-  -
-  \lambda
-  \sum_{t=0}^{T}
-  \mathbb{I}[\state_t \notin \mathcal{S}_{safe}]
-  \right]
-  \quad
-  \mathrm{s.t.}\quad
-  \act_t \sim \pi_{\theta}(\cdot \mid \obs_t,\omega_k).
-  \label{eq:ch17-hier-objective}
-\end{equation}
-여기서 $\omega_{0:K}$는 subgoal 또는 option sequence이고, $\mathcal{S}_{safe}$는 safety set이다. TAMP의 가치는 reward를 크게 만드는 것보다 infeasible branch를 조기에 제거하는 데서 더 크게 나타날 수 있다.
-
-\section{Tool and function calling}
-
-embodied reasoning layer는 종종 외부 tool을 호출해야 한다. 예를 들어 object detector, pose estimator, mapping module, grasp sampler, collision checker, memory retrieval, human query interface가 tool이 될 수 있다.
-\begin{equation}
-  y_t^{tool}
-  =
-  \mathcal{T}_{k_t}
-  (x_t),
-  \qquad
-  k_t
-  \sim
-  \rho_{\psi}
-  (\cdot \mid \ell,\obs_{\leq t},\bel_t).
-  \label{eq:ch17-tool-call}
-\end{equation}
-tool calling은 LLM application에서 흔하지만, robot에서는 tool output이 physical action의 전제 조건이 된다. 따라서 tool result에는 confidence, frame convention, timestamp, validity region이 포함되어야 한다.
-
-\begin{warningbox}{Tool call의 실패 모드}
-tool call이 성공했다는 software-level return code와 robot task가 성공할 조건은 다르다. pose estimator가 값을 반환했더라도 frame이 틀리거나 오래된 observation이면 하위 VLA는 잘못된 target을 실행한다. 따라서 tool result는 controller가 쓰기 전에 freshness와 consistency를 검사해야 한다.
-\end{warningbox}
-
-\section{World models and memory}
-
-hierarchical VLA에서 world model은 두 수준에서 쓰인다. 첫째, short-horizon action consequence를 예측하여 unsafe 또는 infeasible action을 걸러낸다. 둘째, long-horizon task state를 유지하여 이미 완료된 subgoal과 남은 subgoal을 구분한다.
-\begin{equation}
-  \hat{\state}_{t+1}
-  =
-  f_{\varphi}
-  (\bel_t,\act_t),
-  \qquad
-  m_{t+1}
-  =
-  \mathcal{M}(m_t,\obs_t,\act_t,\hat{\state}_{t+1}).
-  \label{eq:ch17-world-memory}
-\end{equation}
-여기서 $m_t$는 scene memory 또는 episodic memory이다. memory가 없으면 robot은 같은 drawer를 반복해서 열거나 이미 옮긴 object를 다시 찾을 수 있다.
-
-world model은 완벽할 필요가 없다. 실용적으로는 다음 세 질문에 답하면 충분한 경우가 많다.
-\begin{enumerate}
-  \item 이 action이 가까운 미래에 collision 또는 joint limit violation을 만들 가능성이 큰가?
-  \item 현재 subgoal이 이미 완료되었는가?
-  \item 실패했을 때 이전에 성공한 recovery pattern이 있는가?
-\end{enumerate}
-
-\section{Monolithic versus hierarchical design}
-
-monolithic VLA와 hierarchical VLA는 서로 배타적인 연구 방향이 아니다. task와 deployment condition에 따라 다른 점이 유리하다.
-
-\begin{table}[h]
-  \centering
-  \caption{Monolithic VLA와 hierarchical VLA의 비교}
-  \begin{tabularx}{\linewidth}{p{0.22\linewidth}X X}
-    \toprule
-    기준 & Monolithic VLA & Hierarchical VLA \\
-    \midrule
-    Short task & data가 충분하면 단순하고 빠름 & overhead가 생길 수 있음 \\
-    Long horizon & compounding error와 memory 약점 & subgoal과 progress 관리에 유리 \\
-    Safety & implicit behavior에 의존하기 쉬움 & external monitor와 constraint 삽입 가능 \\
-    Debugging & failure 원인 분해가 어려움 & layer별 log와 failure taxonomy 가능 \\
-    Latency & 한 model call로 끝날 수 있음 & reasoning call과 tool call 비용 존재 \\
-    Adaptation & data scale이 크면 강력함 & robot-specific wrapper 교체가 쉬움 \\
-    \bottomrule
-  \end{tabularx}
-  \label{tab:ch17-mono-hier}
-\end{table}
-
-공학적 결론은 단순하다. 짧고 반복적인 visuomotor task는 monolithic policy가 더 나을 수 있다. 그러나 multi-step manipulation, mobile manipulation, human-in-the-loop task, safety-critical task는 hierarchical structure가 더 많은 관측 가능성과 개입 지점을 제공한다.
-
-\section{Safety gates}
-
-hierarchical VLA에서 safety는 마지막에 붙이는 filter가 아니다. 각 layer에 gate가 있어야 한다.
-\begin{equation}
-  \act_t^{exec}
-  =
-  \mathcal{P}_{safe}
-  (
-  \act_t^{raw};
-  \bel_t,
-  c_t,
-  \mathcal{S}_{robot},
-  \mathcal{S}_{human}
-  ).
-  \label{eq:ch17-safety-projection}
-\end{equation}
-$\mathcal{P}_{safe}$는 raw action을 실행 가능한 safe action으로 projection하거나, projection이 불가능하면 halt 또는 ask로 전환한다.
-
-\begin{table}[h]
-  \centering
-  \caption{계층별 safety gate}
+  \caption{VLA benchmark family}
   \begin{tabularx}{\linewidth}{p{0.2\linewidth}X X}
     \toprule
-    Layer & Gate & 예시 \\
+    Family & 무엇을 보기 좋은가 & 한계 \\
     \midrule
-    Reasoning & instruction validity & 금지된 행동, ambiguous command, missing object \\
-    Planning & feasibility & collision-free path, reachable grasp, precondition \\
-    VLA policy & action sanity & saturation, invalid token, large pose jump \\
-    Controller & physical limit & torque, velocity, joint limit, contact force \\
-    Runtime monitor & emergency override & human proximity, unexpected contact, perception loss \\
+    Sim manipulation & controlled comparison, repeatability & contact/sensor/latency reality gap \\
+    Long-horizon task & subgoal sequencing, compounding error & reset/protocol dependency가 큼 \\
+    Lifelong/transfer & task variation과 knowledge transfer & benchmark-specific overfitting 가능 \\
+    Open-vocabulary & language grounding과 object generalization & visual grounding이 physical feasibility를 보장하지 않음 \\
+    Real-robot eval & hardware interaction과 deployment friction & cost, variance, reproducibility difficulty \\
+    Safety benchmark & unsafe instruction/event recognition & semantic safety와 physical safety gap \\
     \bottomrule
   \end{tabularx}
-  \label{tab:ch17-safety-gates}
+  \label{tab:ch16-benchmark-family}
 \end{table}
 
-이 구조는 model을 덜 신뢰하자는 말이 아니다. 어떤 model도 모든 physical constraint를 내부화했다는 evidence를 쉽게 제공할 수 없으므로, 검증 가능한 constraint는 system level에서 표현해야 한다는 뜻이다.
+LIBERO, CALVIN, ManiSkill, SimplerEnv, real-robot suites, evaluation harness들은 이 family들 안에서 읽어야 한다 \cite{libero2023,calvin2022,maniskill22023,simplerenv2024}. 특정 benchmark의 높은 score는 그 protocol에서의 evidence이지 모든 robot capability의 증명이 아니다.
 
-\section{Logging and evaluation}
+\section{Evaluation protocol schema}
 
-hierarchical VLA를 평가하려면 final success만 기록해서는 안 된다. 각 layer의 decision이 남아야 한다.
+evaluation episode는 다음 tuple로 정의할 수 있다.
 \begin{equation}
-  L_t
+  e_i
   =
   (
+  s_0,
   \ell,
-  z_t,
-  p_t,
-  \act_t^{raw},
-  \act_t^{exec},
-  s_t^{monitor},
-  y_t
+  \mathcal{R},
+  \pi_{\theta},
+  \tau,
+  y,
+  f,
+  h
   ).
-  \label{eq:ch17-log-record}
+  \label{eq:ch16-episode-schema}
 \end{equation}
-이 log는 failure attribution에 필요하다. 실패가 reasoning error인지, object grounding error인지, VLA action error인지, controller tracking error인지, safety gate의 conservative rejection인지 구분해야 다음 iteration의 data collection이 가능하다.
+여기서 $s_0$는 initial condition, $\ell$은 instruction, $\mathcal{R}$은 reset distribution, $\tau$는 rollout, $y$는 outcome, $f$는 failure label, $h$는 human intervention log이다.
 
-평가 metric도 계층별로 나누어야 한다.
+report에는 최소한 다음 항목이 있어야 한다.
 \begin{enumerate}
-  \item reasoning accuracy: subgoal decomposition, object relation, constraint recognition
-  \item progress accuracy: completion, failure, unsafe event detection
-  \item action execution: tracking, smoothness, interruption latency
-  \item recovery quality: replan success, ask/abort correctness, repeated failure reduction
-  \item system cost: reasoning latency, tool call count, compute, human intervention
+  \item initial condition sampling rule
+  \item instruction generation and ambiguity rule
+  \item reset and termination condition
+  \item allowed human intervention
+  \item controller and action frequency
+  \item success/failure annotation rule
+  \item number of trials and confidence interval
 \end{enumerate}
 
-\section{Design checklist}
+\section{Action-dependent metrics}
 
-hierarchical VLA를 설계할 때 다음 질문을 먼저 정해야 한다.
+Chapter 14에서 action representation이 달라지면 evaluation도 달라진다.
+\begin{table}[h]
+  \centering
+  \caption{Action type별 추가 evaluation metric}
+  \begin{tabularx}{\linewidth}{p{0.22\linewidth}X X}
+    \toprule
+    Action type & 추가 metric & 해석 주의점 \\
+    \midrule
+    Action token & invalid token rate, decoding latency, discretization granularity & token confidence는 safety confidence가 아니다 \\
+    Continuous vector & saturation rate, smoothness, tracking error, scale report & mean action error가 task success를 대체하지 않는다 \\
+    Waypoint/delta pose & IK feasibility, collision-free rate, frame error, recovery after infeasible target & waypoint는 trajectory feasibility가 아니다 \\
+    Action chunk & horizon $H$, interruption latency, chunk smoothness, chunk override rate & long chunk success와 fast recovery는 trade-off가 있다 \\
+    Diffusion/flow & sampling time, sample variance, safety projection rate, mode collapse & multimodality는 safety guarantee가 아니다 \\
+    Whole-body action & balance, foot contact, self-collision, fall/recovery, human proximity & manipulation success만으로 whole-body safety를 말할 수 없다 \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:ch16-action-metrics}
+\end{table}
+
+따라서 VLA 평가표는 model name과 success rate만으로 충분하지 않다. action interface와 control loop 정보를 함께 보고해야 한다.
+
+\section{Robustness and distribution shift}
+
+generalization은 하나의 단어가 아니다. object shift, viewpoint shift, lighting shift, language paraphrase, embodiment shift, dynamics shift는 서로 다르다.
+\begin{equation}
+  \Delta_{eval}
+  =
+  (
+  \Delta_{obj},
+  \Delta_{scene},
+  \Delta_{lang},
+  \Delta_{emb},
+  \Delta_{dyn},
+  \Delta_{human}
+  ).
+  \label{eq:ch16-shift-vector}
+\end{equation}
+평가 protocol은 어떤 shift를 넣었는지 명시해야 한다.
+
+robustness는 다음과 같이 조건부 success로 볼 수 있다.
+\begin{equation}
+  R_{robust}(\Delta)
+  =
+  P
+  (
+  success
+  \mid
+  \Delta_{eval}=\Delta
+  ).
+  \label{eq:ch16-robustness}
+\end{equation}
+평균 success rate가 높아도 특정 shift에서 무너지면 deployment risk가 크다.
+
+\section{Failure taxonomy}
+
+failure를 하나의 실패로 묶으면 data engine이 개선 방향을 찾지 못한다.
+\begin{equation}
+  f
+  \in
+  \{
+  \mathrm{perception},
+  \mathrm{grounding},
+  \mathrm{planning},
+  \mathrm{action},
+  \mathrm{control},
+  \mathrm{safety},
+  \mathrm{human\ interface}
+  \}.
+  \label{eq:ch16-failure-taxonomy}
+\end{equation}
+각 failure type은 다른 대응을 요구한다. perception failure는 data augmentation이나 sensor change가 필요할 수 있고, action failure는 action representation이나 controller wrapper를 바꿔야 할 수 있다.
+
+\section{Statistical reporting}
+
+robot experiment는 비용이 커서 trial 수가 작아지기 쉽다. 따라서 uncertainty reporting이 중요하다. success count를 binomial로 보면 confidence interval을 함께 보고해야 한다.
+\begin{equation}
+  \hat{p}
+  =
+  \frac{k}{N},
+  \qquad
+  \mathrm{SE}
+  =
+  \sqrt{\frac{\hat{p}(1-\hat{p})}{N}}.
+  \label{eq:ch16-success-se}
+\end{equation}
+작은 $N$에서 1--2회 성공 차이는 과도하게 해석하면 안 된다. 특히 real robot evaluation에서는 seed, object placement, operator, reset quality가 variance를 만든다.
+
+\section{Evaluation harnesses and reproducibility}
+
+VLA 평가가 어려운 이유 중 하나는 benchmark별 script, model server, action wrapper, observation preprocessing이 다르기 때문이다. evaluation harness는 이 fragmentation을 줄인다.
+\begin{equation}
+  \mathrm{Harness}
+  =
+  (
+  \mathrm{EnvAPI},
+  \mathrm{ModelAPI},
+  \mathrm{ActionWrapper},
+  \mathrm{Logger},
+  \mathrm{Metric}
+  ).
+  \label{eq:ch16-harness}
+\end{equation}
+vla-eval류 harness는 여러 model과 benchmark를 같은 interface에서 비교하려는 engineering effort로 볼 수 있다. 그러나 harness가 metric validity를 자동으로 해결하지는 않는다. harness는 reproducibility를 돕지만, 무엇을 측정해야 하는지는 여전히 evaluation design의 문제다.
+
+\section{Benchmark artifacts}
+
+Benchmark artifact는 benchmark 설계가 실제 capability보다 쉬운 shortcut을 만드는 현상이다.
+\begin{table}[h]
+  \centering
+  \caption{Benchmark artifact examples}
+  \begin{tabularx}{\linewidth}{p{0.23\linewidth}X X}
+    \toprule
+    Artifact & 생기는 이유 & 대응 \\
+    \midrule
+    Memorized layout & scene variation이 작음 & randomized layout, held-out scene \\
+    Language template shortcut & instruction pattern이 제한됨 & paraphrase, ambiguity, negation test \\
+    Success-only blindness & failure type을 기록하지 않음 & failure taxonomy, near-miss log \\
+    Simulator comfort & sim dynamics가 단순함 & real-robot spot check, dynamics randomization \\
+    Reset leakage & reset state가 train/eval에 반복됨 & split by object/scene/operator/time \\
+    Human intervention hidden & 사람이 암묵적으로 도와줌 & intervention log와 allowed action 명시 \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:ch16-artifacts}
+\end{table}
+
+\section{Real robot reporting standard}
+
+real robot evaluation은 다음 standard를 포함해야 한다.
 \begin{enumerate}
-  \item 상위 reasoning layer는 매 step 호출되는가, event 기반으로 호출되는가?
-  \item reasoning output은 자연어인가, typed command인가, hybrid인가?
-  \item 하위 VLA는 action chunk, waypoint, low-level command 중 무엇을 출력하는가?
-  \item progress detector는 visual model인가, state estimator인가, rule verifier인가?
-  \item 실패 시 recovery option은 누가 선택하는가?
-  \item safety gate는 action 전, controller 전, runtime 중 어디에 있는가?
-  \item log는 layer별 decision과 rejected action을 보존하는가?
+  \item robot hardware, controller, action representation
+  \item sensor setup and calibration
+  \item task distribution and held-out split
+  \item number of trials and initial condition rule
+  \item success, partial success, failure, unsafe event definition
+  \item latency, control frequency, saturation, tracking error
+  \item human intervention and reset protocol
+  \item deployment logs and failure examples
 \end{enumerate}
 
-\begin{casebox}{Case study: embodied reasoning layer를 과대해석하지 않기}
-high-level reasoning layer는 task planning, spatial logic, success detection을 강화할 수 있지만, 그 자체가 low-level VLA policy나 verified controller는 아니다. Real VLA 관점에서는 reasoning output이 typed subgoal인지, action constraint인지, progress signal인지 분리하고, 하위 VLA와 controller가 무엇을 검증하는지 확인해야 한다.
+이 standard가 없으면 real robot demo는 설득력 있는 anecdote일 수는 있어도 재현 가능한 evidence가 되기 어렵다.
+
+\begin{casebox}{Case study: LIBERO/SimplerEnv reporting audit}
+LIBERO와 SimplerEnv류 benchmark는 VLA와 robot policy 평가를 더 재현 가능하게 만들기 위한 중요한 시도이다 \cite{libero2023,simplerenv2024}. 그러나 benchmark가 있다는 사실만으로 Real VLA claim이 닫히지는 않는다. benchmark가 무엇을 통제하고 무엇을 생략하는지 따로 읽어야 한다.
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{@{}p{0.22\linewidth}X X@{}}
+\toprule
+항목 & 확인할 것 & 빠지면 약해지는 claim \\
+\midrule
+Task split & object, scene, language, temporal split이 분리되는가 & memorized layout이나 template shortcut 가능성 \\
+Action wrapper & token/vector/chunk가 simulator command로 어떻게 변환되는가 & action representation 비교의 공정성 \\
+Reset protocol & 실패 후 reset과 initial condition이 기록되는가 & success rate의 variance 해석 \\
+Real transfer & real robot spot check 또는 dynamics stress가 있는가 & simulator comfort를 real capability로 오해할 위험 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+따라서 benchmark 결과를 인용할 때는 score와 함께 protocol card를 읽어야 한다. Real VLA 평가의 핵심은 ``몇 점인가''가 아니라 ``어떤 조건에서 그 점수가 의미를 갖는가''이다.
 \end{casebox}
 
 \chapterwork
-{SayCan/VoxPoser식 planner, OpenVLA/$\pi_0$식 action policy, embodied reasoning layer를 hierarchy 관점에서 비교하라 \cite{saycan2022,voxposer2023,openvla2024,pi02024}.}
-{상위 reasoning layer가 실패했는지 하위 VLA action이 실패했는지 구분하려면 어떤 log가 필요한가?}
-{long-horizon mobile manipulation task에 대해 reasoning layer, VLA policy, controller, monitor의 interface contract를 설계하라.}
+{LIBERO, CALVIN, ManiSkill, SimplerEnv를 benchmark score가 아니라 protocol evidence로 읽어라 \cite{libero2023,calvin2022,maniskill22023,simplerenv2024}.}
+{같은 success rate를 가진 두 VLA system이 서로 다른 robot capability를 가질 수 있는 이유는 무엇인가?}
+{mug/rack/glass task에 대해 success, unsafe event, intervention, recovery, latency, tracking error를 포함한 evaluation report template을 작성하라.}
 
 \section{요약}
 
-계층형 VLA는 고전 modular robotics로의 단순 회귀가 아니다. embodied reasoning model은 task semantics, scene relation, progress, failure, tool use를 다루고, 하위 VLA는 fluid한 visuomotor action generation을 담당하며, controller와 safety monitor는 physical execution을 검증한다. real deployment에서 중요한 것은 어느 layer가 더 지능적인가가 아니라, 어떤 정보가 어느 layer에서 결정되고 어떻게 검증되는가이다.
+Evaluation의 목적은 높은 success rate를 기록하는 것이 아니라, 어떤 capability가 어떤 조건에서 재현 가능하고 어떤 조건에서 무너지는지를 분리해서 증명하는 것이다. Benchmark는 필요하다. 하지만 benchmark score는 특정 protocol의 evidence이지 실제 robot capability 그 자체가 아니다. Real VLA 평가에서는 success rate와 함께 failure taxonomy, robustness shift, latency, tracking, safety intervention, recovery, statistical confidence를 보고해야 한다.
 
-다음 장에서는 이 계층 구조가 실제 하드웨어와 시간 제약을 만날 때 어떤 문제가 생기는지 다룬다. VLA는 좋은 action을 예측하는 것만으로 충분하지 않다. 정해진 latency 안에, 제한된 compute와 sensor bandwidth 안에서, controller가 받아들일 수 있는 형태로 action을 내야 한다.
+다음 장에서는 evaluation에서 드러난 한계가 hierarchical VLA와 embodied reasoning 구조로 어떻게 이어지는지 다룬다.

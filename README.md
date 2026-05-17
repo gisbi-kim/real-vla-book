@@ -35,13 +35,13 @@ The reader-facing artifact is in `dist/`. The `process/` directory is kept for p
 ## Manuscript Structure
 
 - Chapter 0: book intent, system contract, evidence tier, VLA history timeline
-- Part I: Real VLA stack
+- Part I: Real VLA stack, including state, perception, control, contact, and planning
 - Part II: learning foundations
 - Part III: from planner to VLA
 - Part IV: deployment evidence
 - Part V: beyond manipulation
-- Chapter 21: synthesis, review questions, core propositions
-- Chapter 22: future directions
+- Chapter 22: synthesis, review questions, core propositions
+- Chapter 23: future directions
 
 ## Build
 

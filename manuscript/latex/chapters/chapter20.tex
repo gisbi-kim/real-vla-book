@@ -1,394 +1,381 @@
-\chapter[Humanoids and Whole-Body VLA]{Humanoids and\\Whole-Body VLA}
+\chapter{Safety and Assurance}
 
 \section*{학습 목표}
 
-이 장은 humanoid VLA를 arm-only manipulation VLA의 단순 확장으로 보지 않는다. humanoid에서는 torso, head, arms, hands, legs, balance, locomotion, gaze, bimanual coordination, whole-body contact가 하나의 closed-loop system 안에서 결합된다. 따라서 VLA는 semantic goal을 물리적으로 실행 가능한 whole-body objective로 변환해야 하고, whole-body controller는 그 objective를 balance와 contact constraint 안에서 실행해야 한다.
+이 장은 VLA safety를 prompt filter나 모델의 선의로 다루지 않는다. VLA가 물리 로봇을 움직이는 순간 safety는 perception, planning, control, runtime monitoring, data curation, evaluation이 함께 만드는 stack property가 된다. 안전한 VLA는 위험한 명령을 거절할 뿐 아니라, 애매하면 묻고, 불확실하면 멈추고, 실패하면 보수적으로 복구해야 한다.
 
 \begin{enumerate}
-  \item humanoid VLA가 arm-only VLA와 근본적으로 다른 이유를 설명한다.
-  \item whole-body state, action, constraint를 정식화한다.
-  \item VLA policy와 whole-body controller의 책임 경계를 정의한다.
-  \item human video, teleoperation, simulation이 humanoid data engine에서 맡는 역할을 구분한다.
+  \item VLA safety를 semantic, geometric, dynamic, system, data safety로 나눈다.
+  \item unsafe success와 safe failure를 구분한다.
+  \item safety shield, runtime monitor, fallback policy를 수식으로 정의한다.
+  \item assurance case와 safety reporting standard를 설계한다.
 \end{enumerate}
 
-\section{Humanoid VLA is not high-dimensional arm control}
+\section{Safety is a stack property}
 
-tabletop manipulator에서는 end-effector pose와 gripper command만으로 task를 상당 부분 표현할 수 있다. humanoid에서는 같은 ``pick up'' instruction도 base pose, foot placement, torso lean, arm reachability, gaze, hand posture, balance margin을 함께 결정해야 한다.
-
-arm-only VLA를 다음과 같이 쓰자.
+VLA model이 위험한 문장을 거절한다고 해서 robot이 안전해지는 것은 아니다. 반대로 model이 안전한 instruction을 받았더라도 perception error, wrong frame, stale action, controller saturation 때문에 unsafe event가 발생할 수 있다. 따라서 safety는 다음 stack 전체의 성질이다 \cite{ames2019,shielding2018,predictivesafetyfilter2021,iso10218,isots15066}.
 \begin{equation}
-  \act_t^{arm}
+  \mathcal{S}_{VLA}
   =
   (
-  \Delta x_{ee,t},
-  \Delta R_{ee,t},
-  g_t
+  \mathcal{S}_{sem},
+  \mathcal{S}_{geo},
+  \mathcal{S}_{dyn},
+  \mathcal{S}_{sys},
+  \mathcal{S}_{data}
   ).
-  \label{eq:ch20-arm-action}
+  \label{eq:ch19-safety-stack}
 \end{equation}
-humanoid whole-body action은 훨씬 넓다.
-\begin{equation}
-  \act_t^{hum}
-  =
-  (
-  \act_t^{base},
-  \act_t^{torso},
-  \act_t^{head},
-  \act_t^{left\ arm},
-  \act_t^{right\ arm},
-  \act_t^{hands},
-  \act_t^{legs}
-  ).
-  \label{eq:ch20-humanoid-action}
-\end{equation}
-그러나 핵심은 dimension 수가 아니라 coupling이다. arm target이 balance를 바꾸고, foot placement가 reachability를 바꾸며, gaze가 perception quality를 바꾸고, hand contact가 locomotion stability를 바꾼다.
-
-\begin{definitionbox}{Whole-body VLA}
-Whole-body VLA는 language-conditioned policy가 whole-body objective, contact mode, locomotion-manipulation coordination, gaze, hand task를 함께 결정하고, downstream whole-body controller가 balance와 physical constraint 안에서 이를 실행하는 robot policy stack이다.
-\end{definitionbox}
-
-\section{Whole-body state}
-
-humanoid state는 joint configuration만으로 충분하지 않다. base pose, contact state, center of mass, support region, object relation, human proximity가 포함되어야 한다.
-\begin{equation}
-  \state_t^{hum}
-  =
-  (
-  \conf_t,
-  \dot{\conf}_t,
-  x_{base,t},
-  x_{com,t},
-  \mathcal{C}_t,
-  \mathcal{O}_t,
-  h_t
-  ).
-  \label{eq:ch20-humanoid-state}
-\end{equation}
-$\mathcal{C}_t$는 contact set, $\mathcal{O}_t$는 object state, $h_t$는 human/context state이다.
-
-belief state도 중요하다.
-\begin{equation}
-  \bel_t^{hum}
-  =
-  P(
-  \state_t^{hum}
-  \mid
-  \obs_{\leq t},
-  \ctrlcmd_{<t}
-  ).
-  \label{eq:ch20-humanoid-belief}
-\end{equation}
-humanoid는 occlusion이 많고 self-motion이 크다. head, arm, torso가 움직이면 camera extrinsic과 visible region이 계속 바뀐다. 따라서 gaze control과 state estimation은 action policy의 일부가 된다.
-
-\section{Balance and support constraints}
-
-humanoid control에서 balance는 선택 기능이 아니다. center of mass projection이 support polygon 안에 있거나, dynamic balance condition을 만족해야 한다.
-\begin{equation}
-  \Pi_{xy}(x_{com,t})
-  \in
-  \mathcal{P}_{support}
-  \quad
-  \text{for quasi-static tasks}.
-  \label{eq:ch20-support-polygon}
-\end{equation}
-dynamic task에서는 momentum과 contact wrench까지 봐야 한다.
-\begin{equation}
-  \dot{h}_{mom}
-  =
-  \sum_{i \in \mathcal{C}_t}
-  J_i(\conf_t)^{\top} \lambda_i
-  +
-  \tau_{ext}.
-  \label{eq:ch20-momentum}
-\end{equation}
-여기서 $\lambda_i$는 contact wrench, $J_i$는 contact Jacobian이다.
-
-VLA가 whole-body joint command를 직접 낸다면 이런 constraint를 모두 내부화해야 한다. 실제로는 VLA가 objective를 내고 whole-body controller가 constraint를 만족시키는 구조가 더 안전하다.
-
-\section{Interface to whole-body controller}
-
-VLA와 whole-body controller 사이의 interface는 다음 tuple로 정의할 수 있다.
-\begin{equation}
-  z_t^{wbc}
-  =
-  (
-  x_{ee}^{L},
-  x_{ee}^{R},
-  x_{gaze},
-  x_{base},
-  \mathcal{C}_{des},
-  \mathcal{W}_{task},
-  \mathcal{C}_{safe}
-  ).
-  \label{eq:ch20-wbc-interface}
-\end{equation}
-왼손과 오른손 목표, gaze target, base target, desired contact mode, task weight, safety constraint가 포함된다.
-
-whole-body controller는 보통 다음 quadratic program 형태로 쓸 수 있다.
-\begin{equation}
-  \begin{aligned}
-  \min_{\ddot{\conf},\tau,\lambda}
-  \quad&
-  \sum_{k}
-  \|J_k(\conf)\ddot{\conf}+\dot{J}_k\dot{\conf}-\ddot{x}_k^{des}\|_{W_k}^{2}
-  +
-  \|\tau\|_{W_{\tau}}^{2}
-  \\
-  \mathrm{s.t.}\quad&
-  M(\conf)\ddot{\conf}+b(\conf,\dot{\conf})
-  =
-  S^{\top}\tau + J_c^{\top}\lambda,
-  \\
-  &
-  \lambda \in \mathcal{K}_{friction},
-  \qquad
-  \conf \in \mathcal{Q}_{limit},
-  \qquad
-  \tau \in \mathcal{T}_{limit}.
-  \end{aligned}
-  \label{eq:ch20-wbc-qp}
-\end{equation}
-VLA의 역할은 이 QP를 대체하는 것이 아니라, 어떤 task objective와 contact mode를 줄지 결정하는 것이다.
+각 항은 semantic safety, geometric safety, dynamic safety, system safety, data safety를 뜻한다.
 
 \begin{table}[h]
   \centering
-  \caption{VLA policy와 whole-body controller의 책임 경계}
+  \caption{VLA safety taxonomy}
+  \begin{tabularx}{\linewidth}{p{0.22\linewidth}X X}
+    \toprule
+    Safety layer & 보는 것 & 대표 failure \\
+    \midrule
+    Semantic & instruction, intent, policy rule & 위험한 명령 수행, ambiguity 무시 \\
+    Geometric & workspace, collision, reachability & 충돌 경로, unreachable target \\
+    Dynamic & speed, force, torque, contact stability & 과도한 힘, slip, fall, unstable contact \\
+    System & monitor, fallback, override, logging & watchdog 부재, emergency stop 실패 \\
+    Data & demonstration, label, distribution, bias & unsafe behavior imitation, missing negative case \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:ch19-safety-taxonomy}
+\end{table}
+
+이 taxonomy의 목적은 책임을 분리하는 것이다. semantic filter로 collision을 막을 수 없고, collision checker로 위험한 human instruction을 이해할 수 없다. 안전은 여러 gate가 서로 다른 failure mode를 막을 때 생긴다.
+
+\section{Unsafe success and safe failure}
+
+robot benchmark에서 success는 task outcome만 보는 경우가 많다. 그러나 safety 관점에서는 success와 safety를 분리해야 한다.
+\begin{equation}
+  y_i
+  =
+  (
+  y_i^{task},
+  y_i^{safe}
+  ),
+  \qquad
+  y_i^{task}, y_i^{safe} \in \{0,1\}.
+  \label{eq:ch19-task-safe-label}
+\end{equation}
+네 가지 경우가 있다.
+
+\begin{table}[h]
+  \centering
+  \caption{Task outcome과 safety outcome의 분리}
+  \begin{tabularx}{\linewidth}{p{0.18\linewidth}p{0.18\linewidth}X}
+    \toprule
+    Task & Safety & 해석 \\
+    \midrule
+    success & safe & 원하는 deployment outcome \\
+    success & unsafe & unsafe success; task는 되었지만 배치하면 안 됨 \\
+    failure & safe & safe failure; 멈춤, 질문, 보수적 abort \\
+    failure & unsafe & 가장 나쁜 경우; task도 실패하고 위험도 발생 \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:ch19-safe-failure}
+\end{table}
+
+Real VLA에서는 unsafe success가 특히 중요하다. robot이 컵을 빠르게 건네는 데 성공했지만 사람 손에 과도한 힘으로 밀었다면, success rate는 높아도 system은 unsafe이다.
+
+\section{Risk model}
+
+hazard event를 $H_j$라고 하자. 하나의 episode에서 risk는 hazard probability와 severity의 조합으로 볼 수 있다.
+\begin{equation}
+  R
+  =
+  \sum_{j=1}^{J}
+  P(H_j \mid \ell,\obs_{0:T},\pi_{\theta})
+  \cdot
+  C(H_j).
+  \label{eq:ch19-risk}
+\end{equation}
+$C(H_j)$는 hazard severity이다. 같은 probability라도 사람과의 접촉, sharp object, hot object, high-speed motion은 cost가 다르다.
+
+deployment 조건은 다음과 같이 쓸 수 있다.
+\begin{equation}
+  \pi_{\theta}
+  \in
+  \Pi_{deploy}
+  \quad
+  \text{only if}
+  \quad
+  R \leq R_{max}
+  \wedge
+  P(H_{critical}) \leq \epsilon.
+  \label{eq:ch19-deploy-risk}
+\end{equation}
+이 식은 risk를 완전히 정확히 계산할 수 있다는 뜻이 아니다. 최소한 어떤 hazard를 줄이려는지, 어떤 threshold를 기준으로 배치하는지 명시해야 한다는 뜻이다.
+
+\section{Semantic safety}
+
+semantic safety는 language instruction과 context가 허용 가능한지 판단한다. instruction $\ell$에 대해 semantic safety classifier를 다음과 같이 정의할 수 있다.
+\begin{equation}
+  s_{sem}
+  =
+  \sigma_{\phi}
+  (\ell,\obs_t,m_t)
+  \in
+  \{
+  \mathrm{allow},
+  \mathrm{ask},
+  \mathrm{refuse},
+  \mathrm{escalate}
+  \}.
+  \label{eq:ch19-semantic-safety}
+\end{equation}
+중요한 것은 context dependence이다. ``칼을 가져와''는 주방 정리 task에서는 안전할 수 있지만, 사람을 향해 빠르게 전달하는 상황에서는 위험할 수 있다. semantic safety는 단어 금지 목록이 아니라 intent, object, user, scene, robot capability를 함께 보는 판단이다.
+
+\begin{warningbox}{Ambiguity is a safety signal}
+instruction이 애매할 때 임의로 해석해서 실행하는 것은 unsafe behavior이다. VLA가 모를 때 물어보는 능력은 대화 기능이 아니라 safety mechanism이다.
+\end{warningbox}
+
+\section{Geometric and dynamic safety}
+
+geometric safety는 target과 path가 workspace constraint를 만족하는지 본다.
+\begin{equation}
+  \conf_t \in \mathcal{Q}_{free},
+  \qquad
+  x_{ee,t} \in \mathcal{X}_{task},
+  \qquad
+  d(\mathcal{B}_{robot},\mathcal{B}_{human}) \geq d_{min}.
+  \label{eq:ch19-geometric-safety}
+\end{equation}
+dynamic safety는 속도, 힘, 토크, contact constraint를 본다.
+\begin{equation}
+  \|\dot{\conf}_t\| \leq v_{max},
+  \qquad
+  \|\tau_t\| \leq \tau_{max},
+  \qquad
+  \|F_{contact,t}\| \leq F_{max}.
+  \label{eq:ch19-dynamic-safety}
+\end{equation}
+VLA action은 이런 constraint를 직접 만족하지 않을 수 있다. 따라서 raw action은 실행 전에 projection 또는 rejection을 거쳐야 한다.
+
+\section{Safety shield}
+
+safety shield는 learned policy가 낸 raw action을 safety constraint 안으로 넣는 layer이다.
+\begin{equation}
+  \act_t^{exec}
+  =
+  \arg\min_{\act \in \mathcal{A}_{safe}(\bel_t)}
+  \|\act - \act_t^{raw}\|_W^2.
+  \label{eq:ch19-safety-shield}
+\end{equation}
+projection이 가능하면 가장 가까운 safe action을 실행한다. projection이 불가능하면 halt, ask, fallback 중 하나를 선택한다.
+
+control barrier function 형태로 safety set을 표현할 수도 있다. safety condition을 $h(\state)\geq0$로 두면 continuous control에서 다음 constraint를 둘 수 있다.
+\begin{equation}
+  \nabla h(\state) f(\state)
+  +
+  \nabla h(\state) g(\state)\ctrlcmd
+  +
+  \alpha h(\state)
+  \geq 0.
+  \label{eq:ch19-cbf}
+\end{equation}
+VLA가 직접 torque를 내지 않더라도, downstream controller는 이 constraint를 만족하는 command만 실행해야 한다.
+
+\section{Runtime monitor}
+
+runtime monitor는 policy 밖에서 system state를 감시한다.
+\begin{equation}
+  s_t^{mon}
+  =
+  \mathcal{M}
+  (
+  \bel_t,
+  \act_t^{raw},
+  \act_t^{exec},
+  h_t,
+  p_t
+  ),
+  \label{eq:ch19-monitor}
+\end{equation}
+여기서 $h_t$는 hardware state, $p_t$는 progress state이다. monitor output은 다음 mode 중 하나가 될 수 있다.
+\begin{equation}
+  s_t^{mon}
+  \in
+  \{
+  \mathrm{continue},
+  \mathrm{slow},
+  \mathrm{replan},
+  \mathrm{ask},
+  \mathrm{fallback},
+  \mathrm{estop}
+  \}.
+  \label{eq:ch19-monitor-state}
+\end{equation}
+
+\begin{table}[h]
+  \centering
+  \caption{Runtime monitor가 감시해야 할 신호}
   \begin{tabularx}{\linewidth}{p{0.24\linewidth}X X}
     \toprule
-    구성 요소 & VLA가 결정하기 좋은 것 & Controller가 보장해야 할 것 \\
+    Signal & 위험 의미 & 대응 \\
     \midrule
-    Base & 어디로 이동할지, 어느 방향을 볼지 & footstep feasibility, collision, stability \\
-    Arms & 어느 손으로 어떤 object를 다룰지 & IK, joint limit, smooth tracking \\
-    Hands & grasp type, release timing & force limit, contact stability \\
-    Gaze & 무엇을 봐야 하는지 & camera motion smoothness, calibration \\
-    Contact & 기대 contact phase & friction cone, wrench feasibility \\
-    Safety & task-level 금지 조건 & torque, speed, distance hard limit \\
+    Pose uncertainty 증가 & object 또는 robot state 불확실 & slow, re-detect, ask \\
+    Action saturation & policy-controller mismatch & scale down, fallback \\
+    Contact force spike & unexpected collision 또는 grasp failure & stop, retract \\
+    Human proximity 감소 & 사람과 너무 가까움 & speed limit, halt \\
+    Deadline miss & stale action 가능성 & reject action, hold, fallback \\
+    Repeated failure & recovery loop에 빠짐 & replan, human handoff \\
     \bottomrule
   \end{tabularx}
-  \label{tab:ch20-vla-wbc}
+  \label{tab:ch19-monitor-signals}
 \end{table}
 
-\section{Locomotion-manipulation coupling}
+\section{Human supervision}
 
-humanoid는 조작하기 위해 걸어야 하고, 걷는 동안 조작 대상과 시야를 유지해야 한다. 따라서 locomotion과 manipulation은 분리된 문제가 아니다.
+human-in-the-loop은 단순히 사람이 옆에 있다는 뜻이 아니다. human authority boundary가 정의되어야 한다.
 \begin{equation}
-  \begin{aligned}
-  \max_{\xi_{base}, \xi_{arm}}\quad
-  &R_{task}(\xi_{base},\xi_{arm},\ell)\\
-  &-\lambda_{bal} C_{balance}(\xi_{base},\xi_{arm})\\
-  &-\lambda_{col} C_{collision}(\xi_{base},\xi_{arm}).
-  \end{aligned}
-  \label{eq:ch20-loco-manip}
-\end{equation}
-base trajectory $\xi_{base}$와 arm trajectory $\xi_{arm}$는 함께 최적화되어야 한다. 예를 들어 선반 위 물체를 잡는 task에서 base가 너무 가까우면 arm collision이 생기고, 너무 멀면 reachability가 부족하다.
-
-\begin{warningbox}{Arm-first planning의 한계}
-humanoid에서 arm trajectory를 먼저 만들고 나중에 base와 balance를 맞추려 하면 실패가 많아진다. reachability, visibility, support polygon은 task planning 초기에 들어가야 한다.
-\end{warningbox}
-
-\section{Bimanual and dexterous control}
-
-bimanual manipulation은 두 팔을 독립적으로 제어하는 것이 아니다. 양손의 역할 분담, force closure, object frame, relative motion이 필요하다.
-\begin{equation}
-  x_{rel}
+  a_t^{final}
   =
-  (x_{ee}^{L})^{-1} x_{ee}^{R},
-  \qquad
-  x_{obj}
-  =
-  \mathcal{G}(x_{ee}^{L},x_{ee}^{R},c_L,c_R).
-  \label{eq:ch20-bimanual}
+  \mathcal{H}
+  (
+  \act_t^{exec},
+  s_t^{mon},
+  u_t^{human}
+  ).
+  \label{eq:ch19-human-supervision}
 \end{equation}
-한 손은 fixture 역할을 하고 다른 손은 manipulation을 할 수 있다. 또는 두 손이 같은 object를 들고 force를 분배해야 할 수 있다.
+$u_t^{human}$은 approval, correction, emergency stop, teleoperation takeover일 수 있다.
 
-dexterous hand는 더 어렵다. action이 finger joint command로 내려가면 contact state가 급격히 늘어난다.
+supervision design에서 중요한 질문은 세 가지다.
+\begin{enumerate}
+  \item 어떤 event에서 robot이 사람에게 물어보는가?
+  \item 어떤 event에서 사람이 robot을 즉시 override할 수 있는가?
+  \item human intervention이 data engine에 어떻게 기록되는가?
+\end{enumerate}
+human override가 log에 남지 않으면 safety가 실제 model capability처럼 보이는 reporting bias가 생긴다.
+
+\section{Data safety}
+
+VLA는 demonstration에서 behavior를 배운다. demonstration이 항상 안전하다는 보장은 없다. operator가 shortcut을 쓰거나, near-miss를 무시하거나, 안전하지 않은 speed로 task를 수행할 수 있다.
 \begin{equation}
-  c_t^{hand}
+  \mathcal{D}_{safe}
   =
   \{
-  (i,j,n_{ij},f_{ij})
+  \tau_i
+  \in
+  \mathcal{D}
   \mid
-  \mathrm{finger}\ i
-  \ \mathrm{contacts}\ 
-  \mathrm{object}\ j
+  r_{safe}(\tau_i) \geq \rho
   \}.
-  \label{eq:ch20-hand-contact}
+  \label{eq:ch19-safe-data}
 \end{equation}
-VLA가 직접 finger-level command를 내는 것보다 grasp primitive, in-hand manipulation objective, tactile feedback policy를 결합하는 방식이 현실적일 수 있다.
+unsafe demonstration을 단순히 제거하는 것도 항상 답은 아니다. robot은 무엇을 하지 말아야 하는지도 배워야 한다. 따라서 data에는 positive success, safe failure, unsafe near-miss, human correction이 구분되어야 한다.
 
-\section{Dual-system architecture}
+\begin{table}[h]
+  \centering
+  \caption{Safety-aware data label}
+  \begin{tabularx}{\linewidth}{p{0.22\linewidth}X X}
+    \toprule
+    Label & 의미 & 학습에서의 사용 \\
+    \midrule
+    Safe success & 성공하고 안전함 & behavior cloning, positive example \\
+    Safe failure & 실패했지만 안전하게 중단 & abstention, recovery, ask 학습 \\
+    Unsafe near-miss & 사고 직전 또는 constraint violation 근접 & shield training, negative mining \\
+    Human correction & 사람이 개입해 수정 & preference, recovery data \\
+    Unsafe success & task는 되었지만 위험함 & success metric에서 제외, penalty data \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:ch19-data-label}
+\end{table}
 
-humanoid VLA는 빠른 visuomotor action과 느린 embodied reasoning을 분리하는 dual-system 구조가 자연스럽다.
+\section{Red-teaming and safety benchmarks}
+
+VLA red-teaming은 단순히 이상한 prompt를 넣어보는 것이 아니다. semantic ambiguity, adversarial instruction, physical uncertainty, perception blind spot, timing failure를 함께 만들어야 한다.
+
+\begin{enumerate}
+  \item unsafe instruction: 명시적으로 위험한 행동 요구
+  \item ambiguous instruction: object, recipient, intent가 불분명한 명령
+  \item context reversal: 같은 문장이 안전한 context와 위험한 context에서 다르게 작동하는지 확인
+  \item perception stress: occlusion, reflective object, poor lighting
+  \item dynamic stress: moving human, moving object, contact transition
+  \item system stress: latency spike, dropped frame, network disconnect
+\end{enumerate}
+
+safety benchmark score는 다음 vector로 보고해야 한다.
 \begin{equation}
-  z_t^{high}
+  M_{safe}
   =
-  \rho_{\psi}
-  (\ell,\obs_{\leq t},\bel_t^{hum},m_t),
-  \qquad
-  z_t^{wbc}
-  =
-  \pi_{\theta}
-  (\obs_{\leq t},z_t^{high}).
-  \label{eq:ch20-dual-system}
+  (
+  R_{unsafe},
+  R_{near\ miss},
+  R_{ask},
+  R_{refuse},
+  R_{fallback},
+  T_{detect},
+  T_{stop}
+  ).
+  \label{eq:ch19-safety-metrics}
 \end{equation}
-상위 reasoning은 task, subgoal, tool use, recovery를 담당한다. 하위 VLA는 whole-body objective를 생성한다. WBC와 locomotion controller는 physics constraint를 만족시킨다.
+unsafe rate만 낮고 ask/refuse가 과도하면 robot은 쓸모가 줄어든다. 반대로 task success가 높아도 near-miss가 많으면 배치할 수 없다.
 
-GR00T N1은 이 관점을 읽기 좋은 최신 사례다 \cite{grootn12025}. 해당 계열은 vision-language module이 환경과 instruction을 해석하고, diffusion transformer motor module이 real-time motor action을 생성하는 dual-system humanoid VLA 구조를 제안한다. 또한 real robot trajectories, human videos, synthetic datasets를 섞는 data mixture를 사용한다. Real VLA 관점에서 중요한 점은 humanoid foundation model을 단일 policy head로 보지 않고, semantic interpretation, motor generation, data mixture, deployment embodiment를 함께 봐야 한다는 것이다.
+\section{Assurance case}
 
-\begin{warningbox}{GR00T N1을 읽을 때 확인할 것}
-Humanoid VLA claim은 ``generalist humanoid''라는 이름만으로 평가하면 안 된다. vision-language module과 motor module의 handoff, action frequency, whole-body controller interface, balance constraint, human-video와 robot-trajectory data의 mixture ratio, real robot evaluation task를 함께 확인해야 한다.
-\end{warningbox}
+assurance는 ``안전할 것 같다''는 인상이 아니라 claim, evidence, argument의 구조이다.
+\begin{equation}
+  \mathcal{A}
+  =
+  (
+  C,
+  E,
+  G
+  ).
+  \label{eq:ch19-assurance-case}
+\end{equation}
+$C$는 safety claim, $E$는 evidence, $G$는 evidence가 claim을 지지하는 argument이다.
 
-\begin{casebox}{Case study: GR00T N1을 humanoid system contract로 읽기}
-GR00T N1의 중요한 점은 humanoid foundation model을 단일 거대 policy로만 제시하지 않는다는 데 있다 \cite{grootn12025}. vision-language module과 diffusion transformer motor module의 분리는 Chapter 17의 hierarchy, Chapter 18의 real-time budget, Chapter 19의 safety envelope와 직접 연결된다.
+\begin{table}[h]
+  \centering
+  \caption{VLA assurance case 예시}
+  \begin{tabularx}{\linewidth}{p{0.22\linewidth}X}
+    \toprule
+    구성 요소 & 예시 \\
+    \midrule
+    Claim & robot은 사람 30 cm 이내에서 gripper 속도를 제한한다 \\
+    Evidence & proximity sensor log, controller limit test, red-team episode \\
+    Argument & monitor가 distance를 측정하고 shield가 speed command를 projection함 \\
+    Assumption & sensor calibration이 유지되고 occlusion이 threshold 이하임 \\
+    Residual risk & sensor blind spot에서는 emergency stop이 필요함 \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:ch19-assurance}
+\end{table}
 
-\begin{center}
-\small
-\begin{tabularx}{\linewidth}{@{}p{0.2\linewidth}X X@{}}
-\toprule
-계약 항목 & 읽어야 할 내용 & Real VLA 질문 \\
-\midrule
-High-level module & instruction, scene, memory, subgoal 처리 & semantic plan이 언제 motor objective로 바뀌는가? \\
-Motor module & diffusion transformer 기반 action generation & action frequency와 WBC interface가 명시되는가? \\
-Data mixture & robot trajectory, human video, synthetic data & embodiment mismatch와 retargeting error를 어떻게 다루는가? \\
-Safety/eval & whole-body task와 human proximity & balance failure, near miss, intervention이 보고되는가? \\
-\bottomrule
-\end{tabularx}
-\end{center}
+VLA assurance의 어려움은 learned model이 open-ended instruction을 다룬다는 점이다. 따라서 assurance case는 model 자체를 완전히 증명하려 하기보다, 배치 범위, monitor, fallback, human override, logging을 함께 묶어야 한다.
 
-이 사례의 결론은 ``humanoid도 VLA가 된다''가 아니다. 더 정확한 결론은 humanoid VLA일수록 model claim이 controller, balance, data mixture, safety case와 더 강하게 묶인다는 것이다.
+\section{Incident report standard}
+
+safety incident가 발생했을 때 다음 정보가 남아야 한다.
+\begin{enumerate}
+  \item instruction, scene snapshot, robot state, human proximity
+  \item raw VLA action과 shield 이후 executed action
+  \item monitor state, watchdog event, fallback 여부
+  \item latency, dropped frame, hardware state
+  \item contact force, collision distance, joint limit margin
+  \item human intervention time과 intervention type
+  \item root cause label: semantic, perception, planning, action, control, system, data
+  \item 재현 가능 조건과 mitigation action
+\end{enumerate}
+incident log가 없으면 safety improvement는 anecdote가 된다. real deployment에서는 near-miss도 failure data로 취급해야 한다.
+
+\begin{casebox}{Case study: unsafe success를 별도 label로 남기기}
+로봇이 컵을 rack에 놓았지만 지나가는 동안 유리컵과 2 mm까지 접근했고 사람이 손을 뻗어 멈출 준비를 했다면, final success만으로는 좋은 결과처럼 보인다. Real VLA report에서는 이 episode를 unsafe success 또는 near-miss로 분리해야 한다. 그래야 safety shield와 data engine이 같은 실패를 다시 학습할 수 있다.
 \end{casebox}
 
-\begin{table}[h]
-  \centering
-  \caption{Humanoid VLA stack}
-  \begin{tabularx}{\linewidth}{p{0.22\linewidth}X X}
-    \toprule
-    Layer & 입력 & 출력 \\
-    \midrule
-    Reasoning & language, scene, memory & subgoal, hand choice, recovery mode \\
-    VLA policy & images, proprioception, subgoal & WBC target, gaze, contact mode \\
-    Whole-body controller & target, state, constraint & torque, velocity, acceleration command \\
-    Locomotion controller & base target, terrain, balance & footstep, gait, base motion \\
-    Safety monitor & state, human proximity, force & slow, stop, fallback, estop \\
-    \bottomrule
-  \end{tabularx}
-  \label{tab:ch20-stack}
-\end{table}
-
-이 구조에서 가장 중요한 것은 handoff이다. reasoning이 ``상자를 내려라''라고 말하는 것과 VLA가 ``오른손으로 잡고 왼발을 앞으로 내딛어라''라고 구체화하는 것 사이에는 많은 state abstraction이 필요하다.
-
-\section{Humanoid data engine}
-
-humanoid data는 arm-only manipulation보다 훨씬 비싸다. human video, teleoperation, simulation, robot autonomous rollout이 서로 다른 역할을 맡는다.
-
-\begin{table}[h]
-  \centering
-  \caption{Humanoid VLA data source}
-  \begin{tabularx}{\linewidth}{p{0.22\linewidth}X X}
-    \toprule
-    Source & 제공하는 것 & 한계 \\
-    \midrule
-    Human video & semantic prior, body-object relation, long-horizon script & embodiment mismatch, missing force/proprioception \\
-    Teleoperation & robot-valid action, contact, recovery example & cost, operator bias, limited scale \\
-    Simulation & rare failure, safety stress, large variation & sim-to-real gap, contact fidelity \\
-    Autonomous rollout & actual policy distribution & unsafe exploration, reset cost \\
-    Motion capture & whole-body kinematic prior & robot dynamics와 actuator limit mismatch \\
-    \bottomrule
-  \end{tabularx}
-  \label{tab:ch20-data}
-\end{table}
-
-human video를 robot action으로 쓰려면 retargeting이 필요하다.
-\begin{equation}
-  \xi_{robot}^{*}
-  =
-  \arg\min_{\xi}
-  d(
-  \mathcal{R}_{robot}(\xi),
-  \mathcal{R}_{human}(\xi_{human})
-  )
-  +
-  \lambda C_{feas}(\xi).
-  \label{eq:ch20-retargeting}
-\end{equation}
-retargeting은 imitation만이 아니라 feasibility projection이다. human은 넘어지지 않고 할 수 있는 motion이라도 robot morphology와 actuator limit에서는 불가능할 수 있다.
-
-\section{Safety envelope}
-
-humanoid는 사람 크기의 mass와 reach를 갖기 때문에 safety envelope가 더 엄격해야 한다.
-\begin{equation}
-  \begin{aligned}
-  \mathcal{E}_{safe}^{hum}
-  =
-  \{&
-  \state,\ctrlcmd
-  \mid
-  d_{human} \geq d_{min},
-  \|v_{ee}\| \leq v_{max},\\
-  &
-  \|F_{contact}\| \leq F_{max},
-  m_{balance} \geq m_{min}
-  \}.
-  \end{aligned}
-  \label{eq:ch20-safety-envelope}
-\end{equation}
-$m_{balance}$는 balance margin이다. manipulation success가 높아도 balance margin이 낮거나 human proximity constraint를 자주 위반하면 humanoid VLA는 배치할 수 없다.
-
-\section{Evaluation}
-
-humanoid VLA 평가는 task success만으로 부족하다.
-\begin{equation}
-  \begin{aligned}
-  M_{hum}
-  =
-  (&
-  R_{task},
-  R_{balance},
-  R_{fall},
-  R_{contact},\\
-  &
-  R_{bimanual},
-  R_{handover},
-  T_{lat},
-  R_{intervention}
-  ).
-  \end{aligned}
-  \label{eq:ch20-humanoid-metrics}
-\end{equation}
-여기서 $R_{balance}$는 balance constraint 만족률, $R_{fall}$은 fall 또는 near-fall rate, $R_{contact}$는 unsafe contact rate, $R_{handover}$는 human handover safety를 뜻한다.
-
-평가 protocol에는 다음 항목이 필요하다.
-\begin{enumerate}
-  \item robot morphology, actuator limit, controller rate
-  \item task environment와 human proximity condition
-  \item fall, near-fall, unsafe contact definition
-  \item teleoperation 또는 human assistance 여부
-  \item object mass, size, temperature, fragility
-  \item balance margin, foot slip, self-collision log
-  \item recovery behavior와 emergency stop event
-\end{enumerate}
-
-\section{Design checklist}
-
-humanoid VLA를 설계할 때는 다음 순서가 실용적이다.
-\begin{enumerate}
-  \item VLA가 joint command를 직접 낼지, WBC objective를 낼지 정한다.
-  \item manipulation task가 base motion과 footstep planning을 요구하는지 먼저 본다.
-  \item gaze와 perception action을 action space에 포함할지 정한다.
-  \item bimanual task에서는 object frame과 relative hand motion을 명시한다.
-  \item teleoperation data에는 balance, contact, recovery label을 함께 저장한다.
-  \item human video prior는 robot feasibility projection을 거친다.
-  \item safety monitor는 human proximity, balance margin, contact force를 high rate로 감시한다.
-\end{enumerate}
-
 \chapterwork
-{GR00T N1과 $\pi_{0.5}$를 humanoid dual-system, data mixture, whole-body controller interface 관점에서 읽어라 \cite{grootn12025,pi052025}.}
-{humanoid VLA에서 manipulation action과 locomotion/balance action을 분리해서 평가하기 어려운 이유는 무엇인가?}
-{humanoid handover task에 대해 high-level module, motor module, WBC, balance constraint, human-proximity safety envelope을 포함한 system contract를 설계하라.}
+{Control barrier functions, shielding, predictive safety filter, ISO safety standards를 VLA safety stack의 서로 다른 evidence tier로 읽어라 \cite{ames2019,shielding2018,predictivesafetyfilter2021,iso10218,isots15066}.}
+{VLA가 위험한 instruction을 거절해도 robot safety가 보장되지 않는 이유는 무엇인가?}
+{unsafe success, safe failure, human intervention, near-miss를 구분하는 incident report form을 작성하라.}
 
 \section{요약}
 
-Humanoid VLA는 VLA의 모든 어려움이 한 embodiment에 모인 형태다. state estimation, contact, action representation, hierarchical reasoning, real-time inference, safety, data scaling이 동시에 필요하다. 핵심은 VLA가 모든 joint command를 직접 예측하는 것이 아니라, semantic goal을 whole-body objective로 바꾸고, controller가 physics constraint 안에서 실행하도록 하는 책임 경계를 세우는 것이다.
+VLA safety는 prompt engineering으로 끝나지 않는다. semantic safety는 위험한 명령과 ambiguity를 다루고, geometric safety는 collision과 reachability를 다루며, dynamic safety는 force와 stability를 제한한다. system safety는 monitor, watchdog, fallback, human override로 구현되고, data safety는 unsafe behavior가 학습되는 것을 막는다. 안전한 VLA는 모든 명령을 수행하는 robot이 아니라, 수행하면 안 되는 상황을 알고 멈출 수 있는 robot이다.
 
-다음 장에서는 책 전체를 마무리하면서 Real VLA가 앞으로 어떤 방향으로 발전해야 하는지 정리한다. 중요한 질문은 더 큰 모델 하나가 모든 문제를 해결하느냐가 아니라, data, embodiment, action interface, evaluation, safety가 함께 어떻게 성숙하느냐다.
+다음 장에서는 이런 safety와 real-time 제약이 humanoid와 whole-body control로 확장될 때 어떤 추가 문제가 생기는지 다룬다. humanoid VLA에서는 manipulation만이 아니라 balance, locomotion, gaze, bimanual coordination, human proximity가 하나의 action space 안에서 결합된다.

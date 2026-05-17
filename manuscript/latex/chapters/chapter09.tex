@@ -1,238 +1,253 @@
-\chapter[Transformers, VLMs, and Grounding]{Transformers, VLMs,\\and Grounding}
+\chapter{Visuomotor Policies}
 
 \section*{학습 목표}
 
-이 장은 Transformer와 Vision-Language Model(VLM)이 VLA의 backbone으로 들어오는 경로를 설명한다. 목적은 Transformer 일반론을 길게 반복하는 것이 아니다. Real VLA 관점에서 필요한 질문은 더 구체적이다. Tokenization은 robot action representation에 어떤 제약을 주는가? VLM의 image-text grounding은 robot manipulation grounding과 어떻게 다른가? Web-scale semantic prior는 어떤 부분을 도와주고, 어떤 부분은 여전히 robot data와 controller가 맡아야 하는가?
+이 장은 언어가 로봇 policy의 중심에 들어오기 전부터 존재했던 image-to-action 계보를 다룬다. VLA는 language-conditioned policy이지만, 실제 action을 생성하고 실행하는 하위 문제는 여전히 visuomotor control의 문제이다. 카메라가 본 장면, proprioception, gripper state, 과거 관측, task condition을 이용해 다음 action을 내는 구조가 오늘날 VLA의 직접적인 전신이다.
 
 \begin{enumerate}
-  \item tokenization과 self-attention을 VLA에 필요한 수준으로 정리한다.
-  \item ViT와 VLM의 multimodal representation을 설명한다.
-  \item contrastive image-text alignment와 open-vocabulary recognition의 의미를 정식화한다.
-  \item semantic grounding, visual grounding, affordance grounding, physical grounding을 구분한다.
+  \item visuomotor policy를 observation-to-action mapping으로 정의한다.
+  \item visual observation이 partial, delayed, viewpoint-dependent state라는 점을 설명한다.
+  \item temporal memory, recurrent policy, attention, transformer policy가 왜 필요한지 정리한다.
+  \item real-robot grasping, pushing, reaching, insertion에서 필요한 evaluation metadata를 정의한다.
 \end{enumerate}
 
-\section{Why VLM matters for VLA}
+\section{From vision to action}
 
-VLA가 가능해진 배경은 로봇공학 내부에만 있지 않다. Transformer는 sequence modeling을 확장했고, ViT는 이미지를 patch token sequence로 바꾸었으며, VLM은 image와 text를 같은 representation space에서 정렬했다 \cite{vaswani2017,dosovitskiy2021vit,clip2021,flamingo2022,blip22023}. 이 흐름은 로봇 policy가 open-vocabulary instruction과 visual scene을 조건으로 action을 생성할 수 있게 만든 핵심 배경이다.
-
-하지만 VLM은 그 자체로 VLA가 아니다. VLM은 보통 다음 함수를 학습한다.
-\begin{equation}
-  \bm{h}^{vlm}
-  =
-  F_{\theta}(\bm{I},\bm{x}^{text}),
-  \label{eq:vlm-representation}
-\end{equation}
-여기서 $\bm{I}$는 image, $\bm{x}^{text}$는 text token sequence이다. VLA는 이 representation을 robot action으로 연결해야 한다.
+Visuomotor policy는 시각 관측과 로봇 상태를 받아 action을 출력하는 policy이다 \cite{levine2016gps,ebert2018visualforesight,florence2021transporter,cliport2022}.
 \begin{equation}
   \act_t
   =
-  G_{\phi}(\bm{h}^{vlm}_t,\conf_t,\bel_t).
-  \label{eq:vlm-to-action}
+  \pi_{\theta}(\bm{I}_t,\conf_t,\bm{g}_t),
+  \label{eq:visuomotor-policy-basic}
 \end{equation}
-식 \eqref{eq:vlm-to-action}의 $G_{\phi}$가 바로 robot-specific policy, action head, planner, controller interface이다. 이 부분이 없으면 VLM은 scene을 설명할 수 있어도 robot을 움직이는 model은 아니다.
+여기서 $\bm{I}_t$는 camera image, $\conf_t$는 robot configuration 또는 proprioception, $\bm{g}_t$는 goal representation이다. goal은 목표 이미지, one-hot task label, language embedding, keypoint, affordance map 등 여러 형태가 될 수 있다.
 
-\section{Tokenization}
-
-Transformer는 입력을 token sequence로 본다. text는 subword token sequence로 표현된다.
+VLA 관점에서 보면 language가 추가되기 전의 policy는 다음과 같은 구조였다.
 \begin{equation}
-  \bm{x}^{text}
+  \act_t
   =
-  (x_1,x_2,\ldots,x_N),
+  \pi_{\theta}(\bm{I}_t,\conf_t,\bm{z}^{task}),
+  \label{eq:task-conditioned-visuomotor}
+\end{equation}
+여기서 $\bm{z}^{task}$는 task id, goal image, desired pose, 또는 learned task embedding이다. VLA는 이 자리에 language instruction $\task$ 또는 VLM embedding을 넣는다.
+
+\begin{definitionbox}{Visuomotor policy}
+Visuomotor policy는 visual observation과 robot state를 조건으로 하여 robot action을 생성하는 policy이다. VLA는 여기에 language-conditioned task semantics를 추가한 형태로 볼 수 있지만, visual feedback, action timing, controller interface, distribution shift 문제는 그대로 남는다.
+\end{definitionbox}
+
+\section{Visual observation is not state}
+
+카메라 영상은 풍부하지만 완전한 state가 아니다. 물체가 보인다고 해서 정확한 6-DoF pose, mass distribution, friction, contact state, occluded obstacle을 아는 것은 아니다. Chapter 2에서 다룬 observation/state 구분은 visuomotor policy에서 가장 직접적으로 나타난다.
+
+visual encoder를 $\phi_{\theta}$라 하면,
+\begin{equation}
+  \bm{h}_t
+  =
+  \phi_{\theta}(\bm{I}_t),
   \qquad
-  x_i\in\mathcal{V}.
-  \label{eq:text-token-sequence}
-\end{equation}
-image도 patch token으로 바꿀 수 있다. image $\bm{I}\in\R^{H\times W\times C}$를 $P\times P$ patch로 나누면 patch 수는
-\begin{equation}
-  N_p = \frac{HW}{P^2}.
-  \label{eq:number-image-patches}
-\end{equation}
-각 patch를 embedding으로 projection하여
-\begin{equation}
-  \bm{z}^{img}_i
+  \act_t
   =
-  E_{img}\mathrm{vec}(\bm{I}_i)+\bm{p}_i
-  \label{eq:vit-patch-embedding}
+  \pi_{\theta}(\bm{h}_t,\conf_t).
+  \label{eq:visual-encoder-policy}
 \end{equation}
-를 만든다. 여기서 $\bm{p}_i$는 positional embedding이다.
+하지만 $\bm{h}_t$가 충분한 state representation인지는 task와 sensor setup에 따라 다르다. camera calibration, viewpoint, lighting, occlusion, motion blur, rolling shutter, depth noise가 모두 action 품질에 영향을 준다.
 
-VLA에서 tokenization의 의미는 더 넓다. language token, image patch token, proprioception token, history token, action token이 하나의 sequence에 들어갈 수 있다.
+\begin{warningbox}{Image-to-action의 숨은 가정}
+Image-to-action policy는 image가 task-relevant state를 충분히 포함한다는 가정을 둔다. 이 가정이 깨지면 policy는 시각적으로 그럴듯한 action을 내더라도 contact, force, hidden object, timing 문제에서 실패한다.
+\end{warningbox}
+
+\section{Closed-loop visual feedback}
+
+open-loop trajectory를 한 번 생성해서 실행하는 방식은 작은 perturbation에 약하다. Visuomotor policy의 강점은 매 step 관측을 다시 보고 action을 수정할 수 있다는 점이다.
 \begin{equation}
-  \bm{Z}
+  \act_t = \pi_{\theta}(\obs_t,\conf_t),
+  \qquad
+  \state_{t+1}=f(\state_t,\controller(\act_t,\hat{\state}_t),\bm{w}_t).
+  \label{eq:closed-loop-visuomotor}
+\end{equation}
+이 closed-loop 구조는 reaching, grasping, pushing처럼 visual correction이 필요한 task에서 중요하다.
+
+Visual servoing의 고전적 형태는 feature error를 줄이는 control이다. image feature를 $\bm{y}$, target feature를 $\bm{y}^{ref}$라 하면,
+\begin{equation}
+  \dot{\conf}
   =
-  [\bm{z}^{text}_{1:N},\bm{z}^{img}_{1:P},\bm{z}^{prop},\bm{z}^{hist},\bm{z}^{act}_{1:K}].
-  \label{eq:vla-token-sequence}
+  -K J_{img}(\conf)^{\dagger}(\bm{y}-\bm{y}^{ref}),
+  \label{eq:visual-servoing}
 \end{equation}
-이 구조는 flexible하지만, robot action이 token으로 잘 표현되는지는 별도 문제이다. Discrete token은 VLM/LLM pipeline과 잘 맞지만, continuous contact-rich manipulation에서는 quantization, latency, smoothness 문제가 생길 수 있다.
+여기서 $J_{img}$는 image feature velocity와 joint velocity를 연결하는 interaction matrix이다. Learned visuomotor policy는 이 mapping을 명시적으로 쓰지 않을 수 있지만, 실제로는 visual error를 action correction으로 바꾸는 문제를 학습한다.
 
-\section{Self-attention}
+\section{Temporal memory}
 
-Self-attention은 token 간 관계를 계산한다. token embedding matrix를 $X\in\R^{N\times d}$라 하면,
+단일 image는 속도, 접촉 전후 변화, occluded state를 충분히 알려주지 않는다. 따라서 policy는 history를 사용할 수 있다.
 \begin{equation}
-  Q=XW_Q,\qquad K=XW_K,\qquad V=XW_V.
-  \label{eq:qkv}
-\end{equation}
-attention output은
-\begin{equation}
-  \mathrm{Attn}(X)
+  \act_t
   =
-  \mathrm{softmax}\left(\frac{QK^\top}{\sqrt{d_k}}\right)V.
-  \label{eq:self-attention}
+  \pi_{\theta}(\obs_{t-H:t},\conf_{t-H:t},\bm{g}_t).
+  \label{eq:history-policy}
 \end{equation}
-
-VLA에서 attention의 장점은 서로 다른 modality 사이의 관계를 모델링할 수 있다는 점이다. 예를 들어 ``빨간 컵을 잡아라''라는 text token은 image patch의 red object region과 연결될 수 있고, ``잡아라''라는 verb는 gripper action과 연결될 수 있다. 그러나 attention weight가 높다고 해서 물리적으로 grasp 가능한 것은 아니다. Attention은 representation relation이고, feasibility는 robot geometry와 contact constraint의 문제이다.
-
-\section{Contrastive image-text alignment}
-
-CLIP-style contrastive learning은 image encoder와 text encoder를 같은 embedding space에 정렬한다. image embedding을 $\bm{u}_i$, text embedding을 $\bm{v}_j$라 하면 similarity는
+recurrent policy는 hidden state를 갱신한다.
 \begin{equation}
-  s_{ij}
+  \bm{m}_t
   =
-  \frac{\bm{u}_i^\top \bm{v}_j}
-  {\|\bm{u}_i\|_2\|\bm{v}_j\|_2}.
-  \label{eq:clip-similarity}
+  F_{\theta}(\bm{m}_{t-1},\obs_t,\conf_t),
+  \qquad
+  \act_t
+  =
+  G_{\theta}(\bm{m}_t,\bm{g}_t).
+  \label{eq:recurrent-visuomotor}
 \end{equation}
-batch 안의 paired image-text를 맞추는 contrastive loss는 다음처럼 쓸 수 있다.
+
+VLA에서도 memory는 optional feature가 아니다. language instruction이 길거나 task가 multi-stage일 때, policy는 현재 frame뿐 아니라 이전 subgoal, grasp 시도, contact event, failure signal을 기억해야 한다.
+
+\section{Attention and transformer policies}
+
+CNN 기반 encoder는 image feature를 만들고, MLP 또는 recurrent head가 action을 출력하는 구조가 오래 쓰였다. Transformer policy는 image patch, proprioception token, action history, task token을 하나의 sequence로 처리할 수 있다.
 \begin{equation}
-  \mathcal{L}_{i2t}
+  \bm{Z}_t
   =
-  -\frac{1}{B}
-  \sum_{i=1}^{B}
-  \log
-  \frac{\exp(s_{ii}/\tau)}
-  {\sum_{j=1}^{B}\exp(s_{ij}/\tau)}.
-  \label{eq:clip-loss}
+  [\bm{z}^{img}_{1:P},\bm{z}^{prop}_t,\bm{z}^{task},\bm{z}^{hist}_{t-H:t}],
+  \qquad
+  \bm{H}_t = \mathrm{Transformer}_{\theta}(\bm{Z}_t).
+  \label{eq:transformer-policy-tokens}
 \end{equation}
-text-to-image 방향 loss도 대칭적으로 더할 수 있다.
-
-이 objective는 image와 caption 사이의 semantic alignment를 강하게 만든다. 그래서 VLM은 zero-shot object recognition, semantic retrieval, open-vocabulary grounding에서 강하다. 그러나 이 loss는 grasp stability, friction, mass, force limit, controller compatibility를 직접 학습하지 않는다.
-
-\section{Multimodal fusion}
-
-VLM은 image token과 text token을 여러 방식으로 결합할 수 있다. 간단한 late fusion은
+action head는 transformer output에서 action distribution을 만든다.
 \begin{equation}
-  \bm{h}
+  p_{\theta}(\act_t\mid \obs_{\le t},\task)
   =
-  \mathrm{Fuse}(\phi_I(\bm{I}),\phi_T(\bm{x}^{text}))
-  \label{eq:late-fusion}
+  \mathrm{ActionHead}_{\theta}(\bm{H}_t).
+  \label{eq:transformer-action-head}
 \end{equation}
-로 쓸 수 있다. Interleaved multimodal model은 image/video/text token을 하나의 sequence로 처리한다.
+
+이 구조는 VLA와 자연스럽게 연결된다. language token과 image token을 같은 transformer에 넣을 수 있고, robot action을 token, continuous vector, chunk, diffusion target으로 출력할 수 있다. 그러나 transformer backbone이 들어왔다고 해서 controller rate, latency, contact feedback 문제가 사라지는 것은 아니다.
+
+\section{Real-robot grasping}
+
+Grasping은 visuomotor policy의 대표적 testbed이다. image에서 grasp point, approach direction, gripper width, lift action을 예측하는 구조는 다음처럼 쓸 수 있다.
 \begin{equation}
-  \bm{Z}
+  \act_t
   =
-  [\bm{z}^{text}_{1:n_1},\bm{z}^{img}_{1:p_1},\bm{z}^{text}_{n_1+1:n_2},\bm{z}^{img}_{p_1+1:p_2}].
-  \label{eq:interleaved-sequence}
+  (\bm{p}^{grasp}_t,\bm{R}^{grasp}_t,w_t,\alpha_t),
+  \label{eq:grasp-action}
 \end{equation}
+여기서 $\bm{p}^{grasp}$는 grasp position, $\bm{R}^{grasp}$는 grasp orientation, $w$는 gripper width, $\alpha$는 execute/open/close 같은 discrete mode이다.
 
-Robot setting에서는 여기에 proprioception과 action history가 추가되어야 한다.
-\begin{equation}
-  \bm{h}^{robot}_t
-  =
-  F_{\theta}(\bm{I}_{t-H:t},\bm{x}^{text},\conf_{t-H:t},\act_{t-H:t}).
-  \label{eq:robot-multimodal-fusion}
-\end{equation}
-이 식은 VLA가 단순 VLM fine-tuning이 아니라는 점을 보여준다. Robot policy에는 body state와 action history가 필요하다.
+grasp policy의 실패는 여러 계층에서 발생한다.
 
-\section{Four kinds of grounding}
+\begin{itemize}
+  \item perception failure: object segmentation 또는 pose 추정 실패
+  \item action failure: grasp pose가 물체 geometry와 맞지 않음
+  \item control failure: approach trajectory나 gripper timing 문제
+  \item contact failure: slip, insufficient normal force, collision
+  \item recovery failure: 실패 후 재파지하지 못함
+\end{itemize}
 
-Grounding이라는 단어는 자주 너무 넓게 쓰인다. Real VLA에서는 최소 네 가지 grounding을 구분해야 한다.
+따라서 grasp success rate만으로는 policy를 충분히 평가할 수 없다. grasp attempt count, slip detection, lift success, placement success, recovery success를 분리해야 한다.
+
+\section{Pushing, reaching, insertion}
+
+Visuomotor policy는 grasping뿐 아니라 pushing, reaching, insertion에서도 사용된다. 각 task는 서로 다른 observation/action coupling을 가진다.
 
 \begin{table}[ht]
 \centering
-\caption{Grounding의 네 가지 의미}
-\label{tab:grounding-types}
+\caption{Visuomotor task별 policy 요구사항}
+\label{tab:visuomotor-tasks}
 \small
-\begin{tabularx}{\textwidth}{p{31mm}X X}
+\begin{tabularx}{\textwidth}{p{26mm}X X}
 \toprule
-종류 & 의미 & VLA에서 필요한 추가 조건 \\
+Task & 필요한 관측 & 대표 action/failure \\
 \midrule
-Semantic grounding & 단어와 개념을 연결한다 & instruction이 task와 constraint로 변환되어야 한다 \\
-Visual grounding & 단어와 image region/object를 연결한다 & object pose, affordance, occlusion을 다뤄야 한다 \\
-Affordance grounding & object가 어떤 action을 허용하는지 추정한다 & robot morphology와 current state에 의존한다 \\
-Physical/action grounding & action이 실제 물리 결과로 이어진다 & controller, contact, force, safety, feedback loop가 필요하다 \\
+Reaching & target pose, end-effector pose, obstacle & overshoot, depth error, calibration error \\
+Grasping & object geometry, gripper state, contact cue & bad grasp point, slip, collision \\
+Pushing & object pose, support friction, contact point & object rotation, loss of contact \\
+Insertion & hole pose, peg pose, contact force, alignment & jamming, rim contact, excessive force \\
+Wiping & surface normal, coverage state, pressure & missed area, too high/low pressure \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-VLM이 주로 강한 영역은 semantic grounding과 visual grounding이다. Robot deployment에서 필요한 것은 affordance grounding과 physical/action grounding이다. 예를 들어 VLM이 ``서랍 손잡이''를 찾을 수 있어도, 그 손잡이가 현재 robot reachability 안에 있는지, 어떤 방향으로 당겨야 하는지, 필요한 force가 얼마인지, gripper가 slip 없이 잡을 수 있는지는 별도 문제이다.
+이 표는 VLA에서도 그대로 중요하다. language instruction이 task를 지정할 수는 있지만, 각 task에서 필요한 visual feedback과 controller interface는 다르다.
 
-\section{From VLM prior to VLA policy}
+\section{Action chunking and bimanual visuomotor policy}
 
-VLM prior는 VLA policy에 여러 방식으로 들어간다.
+고주파 control을 매 step 큰 모델로 생성하기 어렵기 때문에, policy가 짧은 horizon의 action chunk를 출력하는 구조가 많이 쓰인다.
+\begin{equation}
+  \bm{A}_{t:t+H}
+  =
+  \pi_{\theta}(\obs_{\le t},\conf_t,\task).
+  \label{eq:visuomotor-action-chunk}
+\end{equation}
+실행 중에는 chunk의 앞부분만 쓰고 다음 관측에서 다시 chunk를 생성할 수 있다.
+\begin{equation}
+  \ctrlcmd_t
+  =
+  \controller(\bm{A}_{t:t+H}[0],\hat{\state}_t).
+  \label{eq:chunk-execution}
+\end{equation}
 
-\begin{enumerate}
-  \item visual encoder로 사용되어 object와 relation feature를 제공한다.
-  \item language encoder로 사용되어 instruction embedding을 만든다.
-  \item embodied reasoning layer로 사용되어 subgoal, constraint, plan proposal을 만든다.
-  \item action policy backbone으로 fine-tuning되어 action token 또는 action chunk를 생성한다.
-\end{enumerate}
-
-이 구조를 하나의 equation으로 쓰면 다음과 같다.
+Bimanual manipulation에서는 action dimension이 커진다.
 \begin{equation}
   \act_t
   =
-  \pi_{\phi}
-  (
-  F_{\theta}^{vlm}(\bm{I}_t,\task),
-  \conf_t,
-  \bel_t
-  ).
-  \label{eq:vlm-prior-policy}
+  (\act^{left}_t,\act^{right}_t,\act^{sync}_t).
+  \label{eq:bimanual-action}
 \end{equation}
-여기서 $\theta$는 web-scale 또는 multimodal pretraining에서 온 parameter이고, $\phi$는 robot action head 또는 adapter parameter일 수 있다.
+여기서 $\act^{sync}$는 두 arm 사이의 timing, relative pose, force balance를 나타낼 수 있다. cloth folding, cable manipulation, handover 같은 task에서는 이 synchronization이 핵심이다.
 
-VLA 설계의 핵심 질문은 $\theta$와 $\phi$의 경계를 어디에 둘 것인가이다. VLM backbone을 고정하고 action head만 학습할 수도 있고, multimodal backbone 전체를 robot data로 fine-tuning할 수도 있다. 전자는 안정적이지만 embodiment-specific adaptation이 제한될 수 있고, 후자는 강력하지만 데이터와 safety 검증 비용이 커진다.
+\section{From visuomotor policy to VLA}
 
-\section{Grounding gap}
-
-VLM이 잘하는 것과 robot이 해야 하는 것 사이에는 gap이 있다.
+VLA는 visuomotor policy에 language와 foundation-model representation을 추가한다.
 \begin{equation}
-  \mathrm{GroundingGap}
+  \act_t
   =
-  \mathrm{Semantics}(\bm{I},\task)
-  -
-  \mathrm{ExecutableAction}(\state,\conf,\mathcal{C}).
-  \label{eq:grounding-gap}
+  \pi_{\theta}(\bm{I}_t,\conf_t,\task,\bel_t).
+  \label{eq:vla-as-visuomotor}
 \end{equation}
-이 식은 엄밀한 metric이 아니라 책임 경계를 표현하는 notation이다. 첫 항은 VLM이 강한 semantic interpretation이고, 두 번째 항은 robot state, constraint, controller를 만족하는 executable action이다.
+하지만 이 변화가 image-to-action 문제를 제거하지는 않는다. Language는 무엇을 해야 하는지 알려주지만, 어떻게 grasp할지, 어떤 frame에서 delta pose를 낼지, contact 후 어떤 correction을 할지, controller가 어떤 rate로 추적할지는 여전히 system design 문제이다.
 
-이 gap은 다음 failure로 나타난다.
-
-\begin{itemize}
-  \item object는 맞게 찾았지만 graspable pose를 잘못 추정한다.
-  \item instruction은 이해했지만 forbidden region을 hard constraint로 처리하지 않는다.
-  \item open-vocabulary object는 인식하지만 robot reachability를 모른다.
-  \item action token은 생성하지만 controller가 고주파로 추적할 수 없다.
-  \item caption-level relation은 맞지만 contact force나 hinge direction을 모른다.
-\end{itemize}
+\begin{table}[ht]
+\centering
+\caption{Visuomotor policy와 VLA의 차이}
+\label{tab:visuomotor-vla}
+\small
+\begin{tabularx}{\textwidth}{p{30mm}X X}
+\toprule
+항목 & Visuomotor policy & VLA policy \\
+\midrule
+Task condition & task id, goal image, goal pose & language instruction, VLM embedding, subgoal \\
+Observation & image, depth, proprioception & multimodal observation plus language/history \\
+Action & delta pose, joint command, waypoint, chunk & token, continuous action, chunk, trajectory, skill call \\
+Generalization & visual/task distribution 안의 일반화 & open-vocabulary semantics와 embodiment transfer 기대 \\
+Remaining risk & distribution shift, calibration, contact, latency & 동일한 physical risk plus semantic ambiguity \\
+\bottomrule
+\end{tabularx}
+\end{table}
 
 \section{Evaluation metadata}
 
-VLM-to-robot grounding을 평가하려면 일반 VLM benchmark와 다른 metadata가 필요하다.
+Visuomotor policy 또는 VLA policy를 평가할 때 다음 metadata가 필요하다.
 
 \begin{itemize}
-  \item object grounding accuracy and pose error
-  \item relation grounding: left/right/on/in/behind/inside 같은 spatial relation
-  \item affordance prediction: graspable, pushable, openable, reachable
-  \item executable action success: controller tracking, contact success, recovery
-  \item semantic ambiguity handling: ask, abstain, clarify, safe stop
-  \item distribution shift: object category, viewpoint, lighting, layout, distractor
-  \item physical metadata: robot morphology, camera calibration, controller, force limit
+  \item camera setup: viewpoint, calibration, frame rate, latency
+  \item proprioception and gripper state availability
+  \item history length and memory architecture
+  \item action type: delta pose, joint target, waypoint, chunk, token
+  \item controller type and control frequency
+  \item task-specific failure mode: grasp slip, insertion jamming, pushing loss of contact
+  \item recovery policy and number of attempts
+  \item train/test split: object, background, lighting, viewpoint, layout shift
 \end{itemize}
 
-이 metadata가 없으면 VLM의 높은 recognition score를 robot capability로 착각하기 쉽다.
-
-\begin{casebox}{Case study: semantic grounding과 action grounding의 차이}
-VLM이 ``red mug''를 정확히 찾고 ``put it in the rack''을 이해해도, mug pose covariance, rack slot reachability, gripper approach direction, forbidden glass region을 action constraint로 변환하지 못하면 robot task는 실패한다. 이 장의 핵심은 VLM grounding이 action grounding의 입력일 뿐이라는 점이다.
+\begin{casebox}{Case study: ACT/Diffusion Policy에서 VLA action chunk로}
+ACT와 Diffusion Policy는 language 중심 VLA가 아니더라도 action chunk, multimodal action, temporal consistency가 robot policy에서 왜 중요한지 보여준다 \cite{act2023,diffusionpolicy2023}. VLA가 chunk나 diffusion/flow action을 쓰는 이유는 단순히 최신 생성모델을 적용하기 위해서가 아니라, visuomotor policy가 오래 겪어 온 multimodality와 timing 문제를 다루기 위해서다.
 \end{casebox}
 
 \chapterwork
-{Transformer, ViT, CLIP, Flamingo, BLIP-2를 VLA backbone의 representation source로 읽되, physical grounding과 구분하라 \cite{vaswani2017,dosovitskiy2021vit,clip2021,flamingo2022,blip22023}.}
-{attention map이나 image-text score가 높아도 robot affordance claim이 되지 않는 이유는 무엇인가?}
-{하나의 instruction에 대해 semantic grounding, visual grounding, affordance grounding, physical/action grounding을 분리한 annotation sheet를 설계하라.}
+{End-to-end visuomotor policy, visual foresight, Transporter, CLIPort, ACT/Diffusion Policy를 VLA의 실행 계보로 읽어라 \cite{levine2016gps,ebert2018visualforesight,florence2021transporter,cliport2022,act2023,diffusionpolicy2023}.}
+{language가 추가되어도 image-to-action failure mode가 사라지지 않는 이유는 무엇인가?}
+{하나의 pick-place task에 대해 camera setup, history length, action chunk horizon, controller rate, recovery label을 포함한 visuomotor evaluation sheet를 작성하라.}
 
 \section{요약}
 
-Transformer와 VLM은 VLA의 핵심 표현학습 기반이다. Tokenization과 attention은 image, text, proprioception, history, action을 하나의 sequence로 결합할 수 있게 한다. Contrastive VLM은 open-vocabulary semantic grounding을 제공한다. 그러나 semantic grounding은 physical/action grounding이 아니다. Real VLA는 VLM prior를 robot state, controller, contact, safety, evaluation loop와 연결해야 한다.
+Visuomotor policy는 VLA의 이전 단계가 아니라 VLA의 실행 중심부에 남아 있는 문제다. Language와 VLM backbone은 task semantics와 open-vocabulary grounding을 제공하지만, robot action은 여전히 image, proprioception, history, controller interface, contact feedback 위에서 생성된다. 따라서 VLA를 이해하려면 transformer와 language model만 볼 수 없고, image-to-action policy가 real robot에서 어떤 실패를 겪어 왔는지 함께 이해해야 한다.
 
-다음 장에서는 이 VLM/LLM을 robot planner로 사용하던 흐름을 다룬다. 그 시기는 완전한 VLA는 아니었지만, 오늘날 hierarchical VLA와 embodied reasoning architecture의 직접적인 조상이다.
+다음 장에서는 language와 vision representation 자체로 넘어간다. Transformer, VLM, grounding은 VLA가 open-vocabulary task를 이해하게 만든 기반이지만, 그 grounding이 robot action grounding과 어떻게 다른지 구분해야 한다.

@@ -1,275 +1,270 @@
-\chapter{RL, Optimal Control, and Control as Inference}
+\chapter{Imitation Learning and Covariate Shift}
 
 \section*{학습 목표}
 
-이 장은 demonstration을 넘어 policy를 개선하려면 어떤 수학적 언어가 필요한지 다룬다. Chapter 6이 expert trajectory를 모방하는 문제를 다루었다면, Chapter 7은 reward, cost, constraint, uncertainty, exploration, action distribution을 다룬다. VLA 시대에도 이 개념들은 사라지지 않는다. 단지 language instruction과 visual context가 state와 objective 위에 추가되었을 뿐이다.
+이 장은 VLA 이전의 로봇러닝에서 가장 직접적인 계보인 imitation learning을 다룬다. VLA는 foundation model처럼 보이지만, 로봇 action을 학습한다는 점에서는 여전히 demonstration, behavior cloning, rollout distribution, correction data의 문제를 가진다.
 
 \begin{enumerate}
-  \item language-conditioned RL 문제를 MDP/POMDP 관점에서 정식화한다.
-  \item return, value, Q function, Bellman relation을 VLA policy와 연결한다.
-  \item finite-horizon optimal control과 MPC가 VLA controller layer에서 갖는 의미를 설명한다.
-  \item maximum entropy RL과 control as inference가 action-distribution VLA를 이해하는 데 주는 관점을 정리한다.
+  \item behavior cloning objective를 정의한다.
+  \item open-loop supervised learning과 closed-loop robot deployment의 차이를 설명한다.
+  \item covariate shift와 error compounding을 수식으로 정리한다.
+  \item DAgger, intervention, recovery data가 VLA fine-tuning에서 왜 중요한지 설명한다.
 \end{enumerate}
 
-\section{Why imitation is not enough}
+\section{Demonstration data}
 
-Behavior cloning은 expert가 잘하는 구간에서는 강력하다. 그러나 expert data가 충분하지 않거나 task objective가 명시적인 cost/constraint를 포함하면 imitation만으로는 부족하다 \cite{sutton2018,haarnoja2018sac,kumar2020cql}. 예를 들어 ``컵을 식기건조대에 놓아라''라는 task에서 우리는 성공 여부, 충돌 회피, 힘 제한, 시간, smoothness, recovery 성공률을 함께 보고 싶다. 이런 요구는 supervised loss만으로 표현하기 어렵다.
-
-정책이 실제 환경과 상호작용하면서 성능을 개선하려면 다음 질문이 필요하다.
-
-\begin{itemize}
-  \item 어떤 outcome이 좋은가?
-  \item 어떤 constraint를 절대 위반하면 안 되는가?
-  \item exploration은 얼마나 허용 가능한가?
-  \item offline robot data만으로 policy improvement를 할 수 있는가?
-  \item VLA가 낸 action distribution은 어떤 cost나 reward와 일관되는가?
-\end{itemize}
-
-\section{Language-conditioned MDP}
-
-가장 단순하게는 language-conditioned robot control을 MDP로 쓸 수 있다.
+로봇 imitation learning의 입력은 demonstration dataset이다. 하나의 trajectory를 다음과 같이 쓰자 \cite{ross2011dagger,levine2016gps}.
 \begin{equation}
-  \mathcal{M}_{\task}
+  \tau_i
   =
-  (\mathcal{S},\mathcal{A},P,r_{\task},\gamma).
-  \label{eq:language-mdp}
+  \{(\obs_{i,t},\conf_{i,t},\task_i,\act^{E}_{i,t})\}_{t=1}^{T_i}.
+  \label{eq:demo-trajectory}
 \end{equation}
-여기서 $\task$는 language instruction 또는 task embedding이고, $r_{\task}$는 그 instruction에 따라 달라지는 reward function이다. policy는
+여기서 $\act^{E}_{i,t}$는 expert action이다. VLA setting에서는 $\obs_{i,t}$가 image, depth, proprioception, tactile signal, history를 포함할 수 있고, $\task_i$는 language instruction 또는 subgoal이다. 전체 dataset은
 \begin{equation}
-  \act_t \sim \pi_{\theta}(\act\mid \obs_t,\conf_t,\task,\bel_t)
-  \label{eq:language-policy}
-\end{equation}
-로 표현할 수 있다.
-
-실제 로봇은 완전한 state $\state_t$를 보지 못하므로 POMDP가 더 정확하다. 이때 policy는 observation history 또는 belief를 사용한다.
-\begin{equation}
-  \bel_t = \eta p(\obs_t\mid \state_t)\int p(\state_t\mid \state_{t-1},\act_{t-1})\bel_{t-1}d\state_{t-1}.
-  \label{eq:rl-belief-update}
-\end{equation}
-VLA에서 memory, recurrent state, video history, tactile history는 모두 $\bel_t$를 근사하는 방법으로 볼 수 있다.
-
-\section{Return, value, and Q function}
-
-policy $\pi_{\theta}$의 discounted return은 다음과 같다.
-\begin{equation}
-  J(\theta)
+  \mathcal{D}_{E}
   =
-  \mathbb{E}_{\pi_{\theta}}
-  \left[
-  \sum_{t=0}^{T}
-  \gamma^{t} r_{\task}(\state_t,\act_t)
-  \right].
-  \label{eq:rl-return}
-\end{equation}
-value function은 state 또는 belief에서 기대되는 return이다.
-\begin{equation}
-  V^{\pi}(\state)
-  =
-  \mathbb{E}_{\pi}
-  \left[
-  \sum_{k=0}^{\infty}
-  \gamma^{k}r(\state_{t+k},\act_{t+k})
-  \mid \state_t=\state
-  \right].
-  \label{eq:value-function}
-\end{equation}
-Q function은 특정 action을 먼저 선택한 뒤의 기대 return이다.
-\begin{equation}
-  Q^{\pi}(\state,\act)
-  =
-  r(\state,\act)
-  +
-  \gamma
-  \mathbb{E}_{\state'\sim P}
-  [V^{\pi}(\state')].
-  \label{eq:q-function}
+  \{\tau_i\}_{i=1}^{N}.
+  \label{eq:expert-dataset}
 \end{equation}
 
-Bellman optimality relation은
-\begin{equation}
-  Q^{\star}(\state,\act)
-  =
-  r(\state,\act)
-  +
-  \gamma
-  \mathbb{E}_{\state'\sim P}
-  \left[
-  \max_{\act'}Q^{\star}(\state',\act')
-  \right]
-  \label{eq:bellman-optimality}
-\end{equation}
-로 쓸 수 있다.
+중요한 점은 trajectory가 단순한 image-action pair가 아니라는 것이다. trajectory는 embodiment, controller, action representation, reset procedure, safety rule, annotation scheme에 묶여 있다. 같은 ``pick'' demonstration이라도 action이 joint position인지, end-effector delta인지, waypoint인지, action chunk인지에 따라 학습 문제가 달라진다.
 
-VLA 시스템에서 $Q$나 value model은 action을 직접 내는 policy와 다른 역할을 할 수 있다. 예를 들어 LLM/VLM planner가 여러 skill 후보를 만들고, value/affordance model이 ``이 robot이 지금 할 수 있는가''를 평가할 수 있다. 이 구조는 VLA를 단독 policy가 아니라 proposal과 scoring의 결합으로 본다.
+\section{Behavior cloning}
 
-\section{Reward is not just success}
-
-robot task reward는 단순 success indicator만으로 충분하지 않을 때가 많다.
-\begin{equation}
-  r_t
-  =
-  r^{task}_t
-  -
-  \lambda_c c^{collision}_t
-  -
-  \lambda_f c^{force}_t
-  -
-  \lambda_u \|\ctrlcmd_t\|^2
-  -
-  \lambda_j c^{jerk}_t.
-  \label{eq:robot-reward}
-\end{equation}
-여기서 task success는 positive term이고, collision, force, control effort, jerk는 penalty term이다. Language-conditioned reward model은 instruction과 observation을 보고 progress 또는 success를 추정할 수 있다.
-\begin{equation}
-  \hat{r}_t
-  =
-  R_{\psi}(\obs_t,\task,\act_t,\obs_{t+1}).
-  \label{eq:learned-reward}
-\end{equation}
-
-하지만 learned reward는 곧바로 안전한 objective가 아니다. reward model이 misspecified되면 policy는 실제 task success가 아니라 reward model의 빈틈을 최적화할 수 있다. Real VLA에서는 reward model, success detector, safety monitor를 분리해서 기록해야 한다.
-
-\section{Finite-horizon optimal control}
-
-Optimal control은 dynamics와 cost가 주어졌을 때 control sequence를 계산한다. finite horizon 문제는
-\begin{equation}
-\begin{aligned}
-  \ctrlcmd_{0:T-1}^{\star}
-  =
-  \arg\min_{\ctrlcmd_{0:T-1}}
-  &\quad
-  \sum_{t=0}^{T-1}
-  \ell(\state_t,\ctrlcmd_t;\task)
-  +
-  \ell_T(\state_T;\task)\\
-  \text{s.t.}
-  &\quad
-  \state_{t+1}=f(\state_t,\ctrlcmd_t),\\
-  &\quad
-  \state_t\in\mathcal{X},\quad
-  \ctrlcmd_t\in\mathcal{U}.
-\end{aligned}
-\label{eq:finite-horizon-oc}
-\end{equation}
-MPC는 이 문제를 매 시점 다시 푸는 receding-horizon control이다. VLA가 내는 target이나 subgoal은 cost의 parameter가 될 수 있다.
-\begin{equation}
-  \ell(\state_t,\ctrlcmd_t;\act^{VLA}_t)
-  =
-  \|\bm{x}_{ee,t}-\bm{x}^{ref}(\act^{VLA}_t)\|_{Q}^{2}
-  +
-  \|\ctrlcmd_t\|_{R}^{2}.
-  \label{eq:vla-mpc-cost}
-\end{equation}
-
-이 관점에서 VLA는 low-level torque를 직접 예측하지 않아도 된다. VLA는 objective, reference, constraint, terminal condition을 제공하고, optimal control layer가 dynamics와 limit을 처리할 수 있다.
-
-\section{Constrained RL and safety}
-
-로봇에서는 reward maximization만으로 충분하지 않다. constraint violation은 높은 reward로 보상될 수 없는 경우가 많다. constrained MDP는 다음 문제로 쓸 수 있다.
-\begin{equation}
-\begin{aligned}
-  \max_{\pi}
-  &\quad
-  \mathbb{E}_{\pi}\left[\sum_t \gamma^t r_t\right]\\
-  \text{s.t.}
-  &\quad
-  \mathbb{E}_{\pi}\left[\sum_t \gamma^t c^i_t\right]\le d_i,
-  \qquad i=1,\ldots,m.
-\end{aligned}
-\label{eq:constrained-rl}
-\end{equation}
-여기서 $c^i_t$는 collision, force excess, workspace violation, human-proximity risk 같은 cost이다.
-
-Real VLA에서는 이 constraint가 여러 layer에 걸쳐 구현된다. semantic safety filter는 instruction을 검사하고, geometric planner는 forbidden region을 피하며, controller는 torque/force limit을 지키고, runtime monitor는 stop/recover를 결정한다. RL objective는 이 stack을 대체하지 않는다.
-
-\section{Maximum entropy RL}
-
-Maximum entropy RL은 return뿐 아니라 policy entropy를 함께 최적화한다.
-\begin{equation}
-  J_{\mathrm{MaxEnt}}(\pi)
-  =
-  \mathbb{E}_{\pi}
-  \left[
-  \sum_{t}
-  r(\state_t,\act_t)
-  +
-  \alpha \mathcal{H}(\pi(\cdot\mid \state_t))
-  \right].
-  \label{eq:maxent-rl}
-\end{equation}
-entropy term은 여러 가능한 action을 유지하게 하며, multimodal behavior를 다루는 데 유용하다.
-
-VLA의 action generation에서도 이 관점은 중요하다. 조작 task에서 하나의 observation에 대해 하나의 정답 action만 있는 경우는 드물다. 여러 grasp, 여러 approach direction, 여러 recovery path가 가능하다. 따라서 action distribution을 유지하는 policy가 평균 action을 내는 regression policy보다 더 적합할 수 있다.
-
-\section{Control as inference}
-
-Control as inference는 optimal control을 probabilistic inference 문제로 본다. trajectory $\tau$에 대해 optimality variable $\mathcal{O}$를 도입하고,
-\begin{equation}
-  p(\mathcal{O}_t=1\mid \state_t,\act_t)
-  \propto
-  \exp(r(\state_t,\act_t))
-  \label{eq:optimality-likelihood}
-\end{equation}
-라고 두면, 좋은 trajectory posterior는
-\begin{equation}
-  p(\tau\mid \mathcal{O}_{0:T}=1)
-  \propto
-  p(\tau)
-  \exp\left(\sum_{t=0}^{T}r(\state_t,\act_t)\right).
-  \label{eq:trajectory-posterior}
-\end{equation}
-가 된다.
-
-이 관점은 diffusion policy나 flow-based action model을 이해하는 데 도움이 된다. policy는 단일 action을 회귀하는 함수가 아니라, task와 observation 조건 아래에서 좋은 trajectory 또는 action chunk의 distribution을 샘플링하는 모델이 될 수 있다.
-\begin{equation}
-  \act_{t:t+H}
-  \sim
-  p_{\theta}(\act_{t:t+H}\mid \obs_{\le t},\task).
-  \label{eq:action-chunk-distribution}
-\end{equation}
-
-\section{Offline RL and robot data}
-
-Real robot online RL은 비용과 위험이 크다. 따라서 VLA 시대에는 offline robot dataset에서 policy를 개선하려는 압력이 크다. offline RL objective는 dataset distribution 안에서 policy improvement를 시도한다.
+Behavior cloning은 expert action을 supervised learning target으로 둔다. 가장 단순한 objective는 다음과 같다.
 \begin{equation}
   \theta^\star
   =
-  \arg\max_{\theta}
-  \mathbb{E}_{(\state,\act)\sim\mathcal{D}}
-  [Q_{\phi}(\state,\pi_{\theta}(\state))]
-  -
-  \beta D(\pi_{\theta}(\cdot\mid\state),\pi_{\mathcal{D}}(\cdot\mid\state)).
-  \label{eq:offline-rl-regularized}
+  \arg\min_{\theta}
+  \mathbb{E}_{(\obs,\conf,\task,\act^E)\sim\mathcal{D}_{E}}
+  \left[
+  \mathcal{L}\bigl(\pi_{\theta}(\obs,\conf,\task),\act^E\bigr)
+  \right].
+  \label{eq:bc-objective}
 \end{equation}
-두 번째 항은 policy가 dataset support 밖으로 나가는 것을 막는 regularization으로 볼 수 있다.
+연속 action에서는 $\ell_2$ loss나 negative log-likelihood가 쓰일 수 있다.
+\begin{equation}
+  \mathcal{L}_{reg}
+  =
+  \|\pi_{\theta}(\obs,\conf,\task)-\act^E\|_2^2.
+  \label{eq:l2-bc}
+\end{equation}
+확률적 policy에서는 expert action의 likelihood를 최대화한다.
+\begin{equation}
+  \mathcal{L}_{nll}
+  =
+  -\log p_{\theta}(\act^E\mid \obs,\conf,\task).
+  \label{eq:nll-bc}
+\end{equation}
 
-VLA fine-tuning에서도 같은 문제가 있다. 거대한 model이 dataset에 없는 action을 그럴듯하게 생성할 수 있지만, 그것이 robot에서 안전하다는 보장은 없다. 따라서 offline VLA improvement에는 conservative policy update, validation rollout, simulator/hardware-in-the-loop evaluation이 필요하다.
+VLA에서는 action distribution이 단봉일 필요가 없다. 같은 instruction과 observation에서도 여러 grasp, 여러 path, 여러 correction이 가능하다. 따라서 단순 regression loss는 multi-modal action을 평균내는 문제를 만들 수 있다. 이 문제는 diffusion policy, flow matching, discretized action token, mixture density 같은 표현으로 이어진다. 자세한 action representation은 Chapter 14에서 다룬다.
 
-\section{Evaluation metadata}
+\begin{definitionbox}{Behavior cloning}
+Behavior cloning은 expert trajectory에서 observation-condition-action mapping을 supervised learning으로 학습하는 imitation learning 방법이다. 장점은 단순성과 데이터 효율이고, 핵심 약점은 closed-loop rollout 중 학습 분포를 벗어날 수 있다는 점이다.
+\end{definitionbox}
 
-RL 또는 optimal-control component가 들어간 VLA 실험은 다음 항목을 기록해야 한다.
+\section{Open-loop accuracy is not closed-loop success}
+
+Behavior cloning loss는 expert dataset distribution 위에서 계산된다. 하지만 deployment에서 policy가 방문하는 state distribution은 expert distribution과 다를 수 있다. expert가 만드는 state distribution을 $d_E(\state)$, learned policy가 만드는 distribution을 $d_{\theta}(\state)$라 하자. 학습 objective는 대개
+\begin{equation}
+  \mathbb{E}_{\state\sim d_E}
+  [\ell(\pi_{\theta}(\state),\pi_E(\state))]
+  \label{eq:expert-distribution-loss}
+\end{equation}
+를 줄인다. 그러나 deployment risk는
+\begin{equation}
+  \mathbb{E}_{\state\sim d_{\theta}}
+  [\ell(\pi_{\theta}(\state),\pi_E(\state))]
+  \label{eq:policy-distribution-loss}
+\end{equation}
+에 가깝다.
+
+두 distribution이 같으면 supervised learning으로 충분할 수 있다. 문제는 작은 action error가 다음 observation을 바꾸고, 바뀐 observation에서 다시 더 큰 error가 발생한다는 점이다. 이를 covariate shift라고 부른다.
+
+\begin{warningbox}{Open-loop metric의 한계}
+validation set에서 action prediction error가 낮아도 real robot rollout success가 높다는 보장은 없다. validation set은 보통 expert가 방문한 상태이고, 배치 중 policy가 만드는 off-distribution 상태를 충분히 포함하지 않는다.
+\end{warningbox}
+
+\section{Covariate shift}
+
+closed-loop rollout을 다음 동역학으로 쓰자.
+\begin{equation}
+  \state_{t+1}=f(\state_t,\act_t,\bm{w}_t),
+  \qquad
+  \act_t=\pi_{\theta}(\obs_t,\conf_t,\task).
+  \label{eq:bc-rollout-dynamics}
+\end{equation}
+expert policy는 $\pi_E$이고 learned policy는 $\pi_{\theta}$이다. 한 step error probability를
+\begin{equation}
+  \epsilon
+  =
+  \Pr_{\state\sim d_E}
+  \left[
+  \pi_{\theta}(\state)\ne \pi_E(\state)
+  \right]
+  \label{eq:one-step-error}
+\end{equation}
+라고 하면, horizon이 길어질수록 누적 실패 확률은 커진다. 매우 단순한 union bound만 써도
+\begin{equation}
+  \Pr[\text{at least one error in }T\text{ steps}]
+  \le
+  T\epsilon.
+  \label{eq:error-union-bound}
+\end{equation}
+실제 문제는 이보다 더 나쁘다. early error가 policy를 expert dataset 밖의 상태로 보내면 다음 step의 error probability 자체가 증가한다.
+
+VLA에서는 covariate shift가 여러 형태로 나타난다.
 
 \begin{itemize}
-  \item reward source: hand-coded, learned reward, success detector, human preference
-  \item constraint set: collision, force, velocity, workspace, semantic safety
-  \item online interaction budget and safety intervention count
-  \item offline dataset coverage and out-of-distribution action filter
-  \item policy update method: BC, offline RL, on-policy RL, MPC-guided update
-  \item action distribution type: Gaussian, token, mixture, diffusion, flow, chunk
-  \item evaluation split: offline validation, simulator rollout, real robot rollout
+  \item object pose가 demonstration보다 조금 벗어난 상태
+  \item gripper가 half-closed인 상태
+  \item failed grasp 이후 물체가 기울어진 상태
+  \item language instruction은 같지만 scene relation이 바뀐 상태
+  \item contact 후 slip이 발생했지만 image에서는 잘 보이지 않는 상태
 \end{itemize}
 
-\begin{casebox}{Case study: reward model과 safety monitor를 분리해야 하는 이유}
-learned reward가 task progress를 잘 예측해도 collision, force, human proximity 같은 hard constraint를 항상 보장하지는 않는다. Real VLA에서는 reward maximization과 safety filtering을 같은 scalar objective로 합치기보다, reward/cost/constraint/monitor를 분리해 기록하는 편이 검증 가능하다.
+\section{Recovery as a learned behavior}
+
+많은 dataset은 성공 trajectory 중심으로 구성된다. 하지만 real robot은 실패 직전과 실패 직후의 상태를 자주 만난다. 따라서 policy는 nominal action뿐 아니라 recovery action도 배워야 한다. recovery policy를 명시적으로 쓰면 다음과 같은 gating 구조가 된다.
+\begin{equation}
+  \act_t
+  =
+  \begin{cases}
+  \pi^{nom}_{\theta}(\obs_t,\conf_t,\task), & r_t=0,\\
+  \pi^{rec}_{\phi}(\obs_t,\conf_t,\task,e_t), & r_t=1,
+  \end{cases}
+  \label{eq:recovery-policy}
+\end{equation}
+여기서 $r_t$는 recovery mode indicator이고, $e_t$는 failure estimate이다. 하나의 큰 VLA policy가 nominal과 recovery를 모두 학습할 수도 있지만, 데이터에는 recovery context가 명시적으로 들어가야 한다.
+
+\begin{definitionbox}{Recovery data}
+Recovery data는 실패 후 원래 task를 계속 수행하기 위해 필요한 correction trajectory이다. 예를 들어 regrasp, pull-back-and-retry, re-localize, ask-human, stop-safe 같은 행동이 포함된다.
+\end{definitionbox}
+
+\section{DAgger and dataset aggregation}
+
+DAgger의 핵심은 learned policy가 실제로 방문하는 상태에서 expert label을 다시 모으는 것이다. 반복 $k$에서 policy $\pi_{\theta_k}$를 rollout하여 방문 상태 $\state\sim d_{\theta_k}$를 수집하고, expert action을 query한다.
+\begin{equation}
+  \mathcal{D}_{k+1}
+  =
+  \mathcal{D}_{k}
+  \cup
+  \{(\obs_t,\conf_t,\task,\pi_E(\obs_t,\conf_t,\task))\}_{\state_t\sim d_{\theta_k}}.
+  \label{eq:dagger-update}
+\end{equation}
+그 다음 aggregated dataset 위에서 다시 policy를 학습한다.
+\begin{equation}
+  \theta_{k+1}
+  =
+  \arg\min_{\theta}
+  \mathbb{E}_{(\obs,\conf,\task,\act^E)\sim\mathcal{D}_{k+1}}
+  [
+  \mathcal{L}(\pi_{\theta}(\obs,\conf,\task),\act^E)
+  ].
+  \label{eq:dagger-training}
+\end{equation}
+
+Real VLA에서 DAgger를 그대로 적용하기는 쉽지 않다. expert query가 비싸고, robot rollout이 느리며, unsafe state에서 expert intervention이 필요하다. 그러나 원리는 중요하다. 좋은 VLA dataset은 성공 demonstration만 모으는 것이 아니라 policy가 실제로 실패하는 state를 찾아내고, 그 state에서 어떤 correction이 필요한지 기록해야 한다.
+
+\section{Intervention and correction labels}
+
+실제 로봇 데이터 수집에서는 사람이 teleoperation, shared autonomy, emergency stop, verbal correction으로 개입할 수 있다. 이 개입은 단순히 나쁜 rollout을 제거할 근거가 아니라 학습 signal이다. trajectory record를 다음처럼 확장할 수 있다.
+\begin{equation}
+  \tau_i
+  =
+  \{(\obs_t,\conf_t,\task,\act_t,h_t,c_t,y_t)\}_{t=1}^{T_i}.
+  \label{eq:intervention-trajectory}
+\end{equation}
+여기서 $h_t$는 human intervention flag, $c_t$는 correction action 또는 instruction, $y_t$는 success/failure/progress label이다.
+
+\begin{table}[ht]
+\centering
+\caption{VLA imitation dataset에 필요한 label}
+\label{tab:vla-imitation-labels}
+\small
+\begin{tabularx}{\textwidth}{p{30mm}X X}
+\toprule
+Label & 의미 & 쓰임 \\
+\midrule
+success label & task 종료 시 성공 여부 & benchmark와 reward model 학습 \\
+progress label & subgoal 진행 상태 & long-horizon monitoring \\
+intervention flag & 사람이 개입한 시점 & 위험 상태 탐지와 data filtering \\
+correction action & expert가 바꾼 action & DAgger-style aggregation \\
+failure mode & grasp fail, collision, slip, timeout 등 & targeted data collection \\
+controller metadata & action type, controller, rate, safety filter & action representation 해석 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+이 label들이 없으면 VLA fine-tuning은 성공 trajectory의 평균적인 action만 모방하게 된다. 반대로 correction과 failure mode가 있으면 data engine은 어떤 state를 더 수집해야 하는지 알 수 있다.
+
+\section{Success-only data의 위험}
+
+성공 trajectory만 모으면 dataset은 깨끗해 보인다. 그러나 성공 data만으로는 다음 질문에 답하기 어렵다.
+
+\begin{itemize}
+  \item policy가 실패 직전에 어떤 warning signal을 보아야 하는가?
+  \item 실패 후 어떤 recovery action이 가능한가?
+  \item 어떤 failure가 perception 문제이고 어떤 failure가 control interface 문제인가?
+  \item user instruction이 ambiguous할 때 stop/ask behavior를 어떻게 배울 것인가?
+\end{itemize}
+
+실패 data는 모델을 나쁘게 만드는 noise가 아니다. 제대로 annotation되면 failure data는 safety, recovery, uncertainty estimation의 핵심 자원이다.
+
+\section{Action representation and imitation difficulty}
+
+같은 behavior cloning이라도 action representation에 따라 난이도가 달라진다.
+
+\begin{table}[ht]
+\centering
+\caption{Action representation과 imitation learning 난이도}
+\label{tab:action-bc-difficulty}
+\small
+\begin{tabularx}{\textwidth}{p{28mm}X X}
+\toprule
+Action type & 장점 & imitation risk \\
+\midrule
+Joint position & robot API와 직접 연결 가능 & embodiment-specific, joint limit 근처 error \\
+End-effector delta & multi-robot transfer에 유리 & frame/scale ambiguity, contact force 미반영 \\
+Waypoint & planner와 결합 가능 & planner failure와 policy failure가 섞임 \\
+Action chunk & temporal consistency 증가 & interruption과 recovery가 어려움 \\
+Discrete token & language-model pipeline과 잘 맞음 & quantization error, continuous precision 손실 \\
+Diffusion/flow action & multi-modal action 표현 가능 & sampling latency와 controller rate 문제 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+따라서 imitation learning chapter는 단순히 loss function의 장이 아니다. 어떤 action interface를 imitation target으로 삼을지 결정하는 장이다.
+
+\section{Data engine view}
+
+Real VLA에서 imitation learning은 one-shot training recipe가 아니라 data engine이다. 실행 중 실패를 발견하고, 그 실패를 분류하고, 필요한 correction을 수집하고, 다시 fine-tuning하거나 evaluation set에 넣는 loop가 필요하다.
+\begin{equation}
+  \mathcal{D}_{t+1}
+  =
+  \mathcal{D}_{t}
+  \cup
+  \mathcal{D}^{success}_{t}
+  \cup
+  \mathcal{D}^{failure}_{t}
+  \cup
+  \mathcal{D}^{correction}_{t}.
+  \label{eq:data-engine-update}
+\end{equation}
+이 loop는 Chapter 15에서 더 자세히 다룰 data engine의 기본 형태이다.
+
+\begin{casebox}{Case study: success-only data가 recovery를 지우는 방식}
+성공 trajectory만 모으면 policy는 실패 직전 state와 recovery action을 보지 못한다. 실제 rollout에서 gripper가 미끄러지거나 object pose가 살짝 어긋나면 policy는 expert distribution 밖의 상태에 놓인다. intervention과 correction label이 없는 dataset은 offline accuracy가 높아도 deployment recovery를 설명하지 못한다.
 \end{casebox}
 
 \chapterwork
-{Sutton and Barto, SAC, CQL을 읽고 reward, entropy, conservative update가 VLA action distribution에 어떤 의미를 갖는지 연결하라 \cite{sutton2018,haarnoja2018sac,kumar2020cql}.}
-{offline VLA improvement에서 dataset support 밖의 action이 위험한 이유는 무엇인가?}
-{language-conditioned task 하나에 대해 reward, hard constraint, intervention rule, offline validation rule을 분리한 objective schema를 작성하라.}
+{DAgger와 guided policy search를 읽고, VLA fine-tuning에서 failure/correction data가 왜 demonstration보다 중요한 순간이 있는지 확인하라 \cite{ross2011dagger,levine2016gps}.}
+{behavior cloning이 expert distribution에서는 강하지만 robot rollout에서는 약해지는 이유는 무엇인가?}
+{하나의 manipulation task에 대해 success, failure, correction, intervention, recovery record를 포함한 data collection protocol을 설계하라.}
 
 \section{요약}
 
-RL과 optimal control은 VLA의 반대편에 있는 낡은 이론이 아니다. 이들은 VLA가 목표, 제약, 불확실성, action distribution을 어떻게 다루어야 하는지 설명하는 수학적 언어다. Behavior cloning은 expert action을 모방하지만, RL과 optimal control은 무엇이 좋은 행동인지, 어떤 constraint를 지켜야 하는지, 어떤 action distribution이 합리적인지 묻는다. Real VLA는 이 관점을 safety와 data engine 안에 넣어야 한다.
+Imitation learning은 VLA 이전의 낡은 방법이 아니라 VLA의 핵심 학습 기반이다. Behavior cloning은 강력하지만 expert distribution 위에서만 학습한다. 실제 로봇은 learned policy가 만든 상태분포 위에서 움직이므로 covariate shift와 compounding error가 발생한다. 따라서 Real VLA dataset은 성공 demonstration만이 아니라 failure, intervention, correction, recovery, controller metadata를 포함해야 한다. 이 관점이 없으면 VLA fine-tuning은 높은 offline score와 낮은 real rollout success 사이의 간극을 반복하게 된다.
 
-다음 장에서는 language가 붙기 전부터 존재했던 image-to-action 계보, 즉 visuomotor policy를 다룬다.
+다음 장에서는 imitation만으로 충분하지 않을 때 필요한 reward, cost, constraint, exploration의 언어, 즉 reinforcement learning과 optimal control로 넘어간다.

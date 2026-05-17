@@ -1,275 +1,312 @@
-\chapter{Evaluation and Benchmarking}
+\chapter{Adaptation and Fine-Tuning}
 
 \section*{학습 목표}
 
-이 장은 VLA 평가의 evidence standard를 정의한다. 로봇이 task를 성공했다는 말은 생각보다 복잡하다. 한 번 성공했는가, 여러 초기조건에서 성공했는가, 실패했을 때 안전하게 멈췄는가, 사람 개입 없이 성공했는가, latency와 controller tracking은 괜찮았는가? Benchmark score는 capability의 증거이지만 capability 자체는 아니다.
+범용 VLA가 있다고 해서 곧바로 모든 연구실의 로봇을 잘 움직이는 것은 아니다. robot마다 camera pose, gripper, action frequency, joint limit, calibration, table height, object distribution, controller wrapper가 다르다. 따라서 adaptation과 fine-tuning은 선택 사항이 아니라 deployment process의 일부다. 이 장은 foundation VLA를 특정 robot/task/action space에 맞추는 engineering recipe를 정리한다.
 
 \begin{enumerate}
-  \item success rate가 숨기는 failure type과 deployment cost를 설명한다.
-  \item benchmark family와 real-robot protocol을 구분한다.
-  \item action representation별 추가 평가 지표를 정의한다.
-  \item reproducibility, benchmark artifact, statistical confidence를 평가 설계에 포함한다.
+  \item VLA adaptation이 단순 마지막 layer 학습이 아님을 이해한다.
+  \item prompt, sensor, action head, adapter, LoRA, full fine-tuning의 차이를 구분한다.
+  \item embodiment/action normalization과 catastrophic forgetting 문제를 정식화한다.
+  \item offline evaluation에서 real-robot validation으로 넘어가는 protocol을 설계한다.
 \end{enumerate}
 
-\section{Why success rate is not enough}
+\section{Why adaptation is unavoidable}
 
-가장 흔한 metric은 success rate이다.
+pretrained VLA policy를 다음과 같이 쓰자.
 \begin{equation}
-  R_{success}
-  =
-  \frac{1}{N}
-  \sum_{i=1}^{N}
-  \mathbb{I}[y_i=\mathrm{success}].
-  \label{eq:ch16-success-rate}
+  \act_t
+  \sim
+  \pi_{\theta_0}
+  (\cdot \mid \obs_{\leq t},\ell,\conf_t,m_0).
+  \label{eq:ch15-pretrained-policy}
 \end{equation}
-이 지표는 필요하지만 충분하지 않다. 같은 success rate라도 실패 양상, 개입 횟수, 충돌 위험, latency, recovery ability가 다를 수 있다.
-
-Real VLA 평가에서는 최소한 다음 vector를 함께 봐야 한다.
+여기서 $m_0$는 pretraining data의 implicit metadata이다. 실제 배치 대상 robot은 $m_{\star}$를 갖는다. adaptation은 다음 mismatch를 줄이는 과정이다.
 \begin{equation}
-  \begin{aligned}
-  M
+  \Delta_m
   =
-  (&
-  R_{success},
-  R_{failure\ type},
-  R_{intervention},
-  R_{unsafe},\\
-  &
-  T_{completion},
-  T_{infer},
-  E_{tracking},
-  R_{recovery}
-  ).
-  \end{aligned}
-  \label{eq:ch16-metric-vector}
+  d(m_0,m_{\star})
+  =
+  d_{sensor}
+  +
+  d_{action}
+  +
+  d_{embodiment}
+  +
+  d_{task}
+  +
+  d_{controller}.
+  \label{eq:ch15-metadata-mismatch}
 \end{equation}
-success rate 하나만 보고 model을 비교하면, benchmark에서 빠르게 성공하지만 실제 배치에서는 위험한 policy를 좋은 policy로 오해할 수 있다.
+이 mismatch가 작으면 prompt나 action normalization만으로 충분할 수 있다. mismatch가 크면 action head, vision encoder, language backbone, controller wrapper까지 조정해야 한다.
 
-\section{Benchmark families}
+adaptation을 너무 약하게 하면 robot-specific behavior를 얻지 못한다. 너무 강하게 하면 pretrained representation을 망가뜨리거나 unsafe overfitting이 생긴다. 이 장의 핵심은 어디를 얼마나 바꿀지 결정하는 것이다.
 
-Benchmark는 모두 같은 역할을 하지 않는다. 일부는 language-conditioned long-horizon manipulation을 본다. 일부는 lifelong learning, simulation coverage, open-vocabulary instruction, real-robot robustness를 본다.
+\section{Adaptation targets}
 
+VLA adaptation target은 여러 층에 있다.
 \begin{table}[h]
   \centering
-  \caption{VLA benchmark family}
-  \begin{tabularx}{\linewidth}{p{0.2\linewidth}X X}
-    \toprule
-    Family & 무엇을 보기 좋은가 & 한계 \\
-    \midrule
-    Sim manipulation & controlled comparison, repeatability & contact/sensor/latency reality gap \\
-    Long-horizon task & subgoal sequencing, compounding error & reset/protocol dependency가 큼 \\
-    Lifelong/transfer & task variation과 knowledge transfer & benchmark-specific overfitting 가능 \\
-    Open-vocabulary & language grounding과 object generalization & visual grounding이 physical feasibility를 보장하지 않음 \\
-    Real-robot eval & hardware interaction과 deployment friction & cost, variance, reproducibility difficulty \\
-    Safety benchmark & unsafe instruction/event recognition & semantic safety와 physical safety gap \\
-    \bottomrule
-  \end{tabularx}
-  \label{tab:ch16-benchmark-family}
-\end{table}
-
-LIBERO, CALVIN, ManiSkill, SimplerEnv, real-robot suites, evaluation harness들은 이 family들 안에서 읽어야 한다 \cite{libero2023,calvin2022,maniskill22023,simplerenv2024}. 특정 benchmark의 높은 score는 그 protocol에서의 evidence이지 모든 robot capability의 증명이 아니다.
-
-\section{Evaluation protocol schema}
-
-evaluation episode는 다음 tuple로 정의할 수 있다.
-\begin{equation}
-  e_i
-  =
-  (
-  s_0,
-  \ell,
-  \mathcal{R},
-  \pi_{\theta},
-  \tau,
-  y,
-  f,
-  h
-  ).
-  \label{eq:ch16-episode-schema}
-\end{equation}
-여기서 $s_0$는 initial condition, $\ell$은 instruction, $\mathcal{R}$은 reset distribution, $\tau$는 rollout, $y$는 outcome, $f$는 failure label, $h$는 human intervention log이다.
-
-report에는 최소한 다음 항목이 있어야 한다.
-\begin{enumerate}
-  \item initial condition sampling rule
-  \item instruction generation and ambiguity rule
-  \item reset and termination condition
-  \item allowed human intervention
-  \item controller and action frequency
-  \item success/failure annotation rule
-  \item number of trials and confidence interval
-\end{enumerate}
-
-\section{Action-dependent metrics}
-
-Chapter 13에서 action representation이 달라지면 evaluation도 달라진다.
-\begin{table}[h]
-  \centering
-  \caption{Action type별 추가 evaluation metric}
+  \caption{VLA adaptation target}
   \begin{tabularx}{\linewidth}{p{0.22\linewidth}X X}
     \toprule
-    Action type & 추가 metric & 해석 주의점 \\
+    Target & 무엇을 바꾸는가 & 적합한 상황 \\
     \midrule
-    Action token & invalid token rate, decoding latency, discretization granularity & token confidence는 safety confidence가 아니다 \\
-    Continuous vector & saturation rate, smoothness, tracking error, scale report & mean action error가 task success를 대체하지 않는다 \\
-    Waypoint/delta pose & IK feasibility, collision-free rate, frame error, recovery after infeasible target & waypoint는 trajectory feasibility가 아니다 \\
-    Action chunk & horizon $H$, interruption latency, chunk smoothness, chunk override rate & long chunk success와 fast recovery는 trade-off가 있다 \\
-    Diffusion/flow & sampling time, sample variance, safety projection rate, mode collapse & multimodality는 safety guarantee가 아니다 \\
-    Whole-body action & balance, foot contact, self-collision, fall/recovery, human proximity & manipulation success만으로 whole-body safety를 말할 수 없다 \\
+    Prompt/template & instruction style, task wording & model capability는 충분하지만 language convention이 다를 때 \\
+    Sensor remapping & camera crop, calibration, proprioception channel & observation schema가 다를 때 \\
+    Action wrapper & normalization, clipping, frame convention & action space는 유사하지만 scale/rate가 다를 때 \\
+    Action head & token/vector/chunk decoder & robot action type이 달라질 때 \\
+    Adapter/LoRA & 일부 low-rank parameter update & data가 작고 pretrained representation을 보존해야 할 때 \\
+    Full fine-tuning & backbone까지 update & domain gap이 크고 충분한 data/evaluation이 있을 때 \\
+    Controller wrapper & safety, tracking, smoothing, rate conversion & model output과 robot controller가 직접 맞지 않을 때 \\
     \bottomrule
   \end{tabularx}
-  \label{tab:ch16-action-metrics}
+  \label{tab:ch15-adaptation-targets}
 \end{table}
 
-따라서 VLA 평가표는 model name과 success rate만으로 충분하지 않다. action interface와 control loop 정보를 함께 보고해야 한다.
+Open-source VLA 생태계에서 Octo, OpenVLA, OpenVLA-OFT, FAST, VLA Foundry 같은 흐름은 이 target들을 서로 다른 방식으로 다룬다 \cite{octo2024,openvla2024,openvlaoft2025,fast2025,vlafoundry2026}. 이 책에서는 이들을 특정 성능 수치의 증거가 아니라, adaptation design space를 보여주는 case study로 취급한다.
 
-\section{Robustness and distribution shift}
+\section{Action head adaptation}
 
-generalization은 하나의 단어가 아니다. object shift, viewpoint shift, lighting shift, language paraphrase, embodiment shift, dynamics shift는 서로 다르다.
+Chapter 14의 관점에서 가장 중요한 fine-tuning 대상은 action head이다. pretrained representation $h_t$가 주어졌을 때 action head는 다음 mapping을 만든다.
 \begin{equation}
-  \Delta_{eval}
+  \act_t
   =
-  (
-  \Delta_{obj},
-  \Delta_{scene},
-  \Delta_{lang},
-  \Delta_{emb},
-  \Delta_{dyn},
-  \Delta_{human}
-  ).
-  \label{eq:ch16-shift-vector}
+  g_{\phi}(h_t,\conf_t).
+  \label{eq:ch15-action-head}
 \end{equation}
-평가 protocol은 어떤 shift를 넣었는지 명시해야 한다.
-
-robustness는 다음과 같이 조건부 success로 볼 수 있다.
+robot이 바뀌면 $g_{\phi}$의 output type이 달라질 수 있다. 예를 들어 source model이 token action을 내는데 target robot은 continuous delta pose를 요구할 수 있다.
 \begin{equation}
-  R_{robust}(\Delta)
-  =
-  P
-  (
-  success
-  \mid
-  \Delta_{eval}=\Delta
-  ).
-  \label{eq:ch16-robustness}
-\end{equation}
-평균 success rate가 높아도 특정 shift에서 무너지면 deployment risk가 크다.
-
-\section{Failure taxonomy}
-
-failure를 하나의 실패로 묶으면 data engine이 개선 방향을 찾지 못한다.
-\begin{equation}
-  f
-  \in
-  \{
-  \mathrm{perception},
-  \mathrm{grounding},
-  \mathrm{planning},
-  \mathrm{action},
-  \mathrm{control},
-  \mathrm{safety},
-  \mathrm{human\ interface}
-  \}.
-  \label{eq:ch16-failure-taxonomy}
-\end{equation}
-각 failure type은 다른 대응을 요구한다. perception failure는 data augmentation이나 sensor change가 필요할 수 있고, action failure는 action representation이나 controller wrapper를 바꿔야 할 수 있다.
-
-\section{Statistical reporting}
-
-robot experiment는 비용이 커서 trial 수가 작아지기 쉽다. 따라서 uncertainty reporting이 중요하다. success count를 binomial로 보면 confidence interval을 함께 보고해야 한다.
-\begin{equation}
-  \hat{p}
-  =
-  \frac{k}{N},
+  g_{\phi}^{source}: h_t \mapsto z_t,
   \qquad
-  \mathrm{SE}
-  =
-  \sqrt{\frac{\hat{p}(1-\hat{p})}{N}}.
-  \label{eq:ch16-success-se}
+  g_{\phi}^{target}: h_t \mapsto \Delta x_t.
+  \label{eq:ch15-head-replacement}
 \end{equation}
-작은 $N$에서 1--2회 성공 차이는 과도하게 해석하면 안 된다. 특히 real robot evaluation에서는 seed, object placement, operator, reset quality가 variance를 만든다.
+이 경우 full backbone보다 action head와 wrapper를 먼저 조정하는 것이 보수적이다. backbone은 semantic perception을 유지하고, target-specific motor interface만 바꾼다.
 
-\section{Evaluation harnesses and reproducibility}
+\section{Embodiment adapter}
 
-VLA 평가가 어려운 이유 중 하나는 benchmark별 script, model server, action wrapper, observation preprocessing이 다르기 때문이다. evaluation harness는 이 fragmentation을 줄인다.
+multi-embodiment adaptation에서는 robot metadata를 policy에 명시적으로 넣는 것이 유리하다.
 \begin{equation}
-  \mathrm{Harness}
+  e_{\star}
   =
-  (
-  \mathrm{EnvAPI},
-  \mathrm{ModelAPI},
-  \mathrm{ActionWrapper},
-  \mathrm{Logger},
-  \mathrm{Metric}
-  ).
-  \label{eq:ch16-harness}
+  E_{\eta}(m_{\star}),
+  \qquad
+  \act_t
+  \sim
+  \pi_{\theta}
+  (\cdot\mid \obs_{\leq t},\ell,\conf_t,e_{\star}).
+  \label{eq:ch15-embodiment-adapter}
 \end{equation}
-vla-eval류 harness는 여러 model과 benchmark를 같은 interface에서 비교하려는 engineering effort로 볼 수 있다. 그러나 harness가 metric validity를 자동으로 해결하지는 않는다. harness는 reproducibility를 돕지만, 무엇을 측정해야 하는지는 여전히 evaluation design의 문제다.
+여기서 $E_{\eta}$는 embodiment adapter이다. 이 adapter는 kinematics, action scale, camera calibration, gripper type 같은 정보를 representation에 넣는다.
 
-\section{Benchmark artifacts}
+adapter가 없으면 model은 robot-specific difference를 observation distribution에서 암묵적으로 추론해야 한다. 이는 data가 많을 때는 가능할 수 있지만, small fine-tuning에서는 불안정하다.
 
-Benchmark artifact는 benchmark 설계가 실제 capability보다 쉬운 shortcut을 만드는 현상이다.
+\section{LoRA, adapter tuning, and full fine-tuning}
+
+parameter-efficient tuning의 한 예는 low-rank update이다.
+\begin{equation}
+  W'
+  =
+  W
+  +
+  \Delta W,
+  \qquad
+  \Delta W
+  =
+  BA,
+  \quad
+  \mathrm{rank}(\Delta W)\ll \mathrm{rank}(W).
+  \label{eq:ch15-lora}
+\end{equation}
+이 방식은 pretrained representation을 크게 바꾸지 않고 target data에 적응할 수 있다. small dataset에서는 full fine-tuning보다 안정적일 수 있다.
+
+하지만 parameter-efficient tuning이 항상 충분한 것은 아니다. camera modality가 크게 바뀌거나, action representation이 바뀌거나, target task가 pretraining distribution 밖이면 action head와 일부 encoder를 함께 조정해야 할 수 있다.
+
 \begin{table}[h]
   \centering
-  \caption{Benchmark artifact examples}
-  \begin{tabularx}{\linewidth}{p{0.23\linewidth}X X}
+  \caption{Fine-tuning 방식의 trade-off}
+  \begin{tabularx}{\linewidth}{p{0.2\linewidth}X X}
     \toprule
-    Artifact & 생기는 이유 & 대응 \\
+    Method & 장점 & 위험 \\
     \midrule
-    Memorized layout & scene variation이 작음 & randomized layout, held-out scene \\
-    Language template shortcut & instruction pattern이 제한됨 & paraphrase, ambiguity, negation test \\
-    Success-only blindness & failure type을 기록하지 않음 & failure taxonomy, near-miss log \\
-    Simulator comfort & sim dynamics가 단순함 & real-robot spot check, dynamics randomization \\
-    Reset leakage & reset state가 train/eval에 반복됨 & split by object/scene/operator/time \\
-    Human intervention hidden & 사람이 암묵적으로 도와줌 & intervention log와 allowed action 명시 \\
+    Frozen backbone + new head & 안정적이고 data-efficient & semantic-action mismatch가 남을 수 있음 \\
+    Adapter / LoRA & forgetting을 줄이고 비용이 낮음 & 큰 domain gap에는 부족할 수 있음 \\
+    Partial fine-tuning & 필요한 module만 바꿀 수 있음 & 어떤 layer를 열지 결정이 어려움 \\
+    Full fine-tuning & target domain에 강하게 적응 & catastrophic forgetting, unsafe overfitting, 큰 검증 비용 \\
     \bottomrule
   \end{tabularx}
-  \label{tab:ch16-artifacts}
+  \label{tab:ch15-ft-methods}
 \end{table}
 
-\section{Real robot reporting standard}
+\section{Fine-tuning objective}
 
-real robot evaluation은 다음 standard를 포함해야 한다.
+target dataset $\mathcal{D}_{target}$에 대해 behavior cloning loss를 쓰면
+\begin{equation}
+  \mathcal{L}_{target}
+  =
+  -
+  \mathbb{E}_{(\obs,\ell,\act)\sim\mathcal{D}_{target}}
+  \log
+  \pi_{\theta}(\act\mid\obs,\ell).
+  \label{eq:ch15-target-loss}
+\end{equation}
+그러나 target data가 작으면 overfitting과 forgetting이 생긴다. 따라서 source policy와의 regularization을 추가할 수 있다.
+\begin{equation}
+  \mathcal{L}
+  =
+  \mathcal{L}_{target}
+  +
+  \lambda
+  D_{KL}
+  (
+  \pi_{\theta}(\cdot\mid\obs,\ell)
+  \|
+  \pi_{\theta_0}(\cdot\mid\obs,\ell)
+  )
+  +
+  \beta
+  \mathcal{L}_{safe}.
+  \label{eq:ch15-regularized-ft}
+\end{equation}
+여기서 $\mathcal{L}_{safe}$는 unsafe action penalty, constraint violation penalty, 또는 safety classifier loss가 될 수 있다.
+
+\section{Data mixture for adaptation}
+
+adaptation data는 success-only demonstration으로 충분하지 않다.
+\begin{equation}
+  \mathcal{D}_{adapt}
+  =
+  \mathcal{D}_{demo}
+  \cup
+  \mathcal{D}_{correction}
+  \cup
+  \mathcal{D}_{failure}
+  \cup
+  \mathcal{D}_{intervention}.
+  \label{eq:ch15-adaptation-data}
+\end{equation}
+small dataset에서는 data weighting이 중요하다.
+\begin{equation}
+  \mathcal{L}_{adapt}
+  =
+  \sum_{j}
+  w_j
+  \mathbb{E}_{r\sim\mathcal{D}_j}
+  [
+  \ell_{\theta}(r)
+  ].
+  \label{eq:ch15-adaptation-mixture}
+\end{equation}
+failure와 correction data는 수가 적어도 target deployment에서는 큰 영향을 줄 수 있다. 특히 action chunking이나 continuous action objective를 쓰는 경우, correction data는 recovery behavior를 학습하는 핵심이다.
+
+\section{Action normalization and calibration}
+
+fine-tuning에서 action normalization은 단순 preprocessing이 아니다. target robot의 physical scale을 정하는 calibration step이다.
+\begin{equation}
+  \act_t^{phys}
+  =
+  \sigma_{\star}
+  \odot
+  \act_t^{norm}
+  +
+  \mu_{\star},
+  \qquad
+  \act_t^{safe}
+  =
+  \mathrm{Clip}
+  (\act_t^{phys},\mathcal{U}_{safe}).
+  \label{eq:ch15-action-calibration}
+\end{equation}
+이 식에서 $\mu_{\star},\sigma_{\star}$와 $\mathcal{U}_{safe}$는 robot-specific이다. 잘못된 scale은 성공률 문제 이전에 safety issue가 된다.
+
+calibration은 반드시 offline sanity check와 real robot low-speed test를 거쳐야 한다.
+\begin{equation}
+  \mathrm{Ready}
+  =
+  \mathbb{I}
+  [
+  \mathrm{SchemaCheck}
+  \land
+  \mathrm{ScaleCheck}
+  \land
+  \mathrm{SafetyCheck}
+  \land
+  \mathrm{LatencyCheck}
+  ].
+  \label{eq:ch15-readiness}
+\end{equation}
+
+\section{Validation protocol}
+
+fine-tuning된 policy는 곧바로 full-speed real robot에 올리면 안 된다. 최소 세 단계가 필요하다.
 \begin{enumerate}
-  \item robot hardware, controller, action representation
-  \item sensor setup and calibration
-  \item task distribution and held-out split
-  \item number of trials and initial condition rule
-  \item success, partial success, failure, unsafe event definition
-  \item latency, control frequency, saturation, tracking error
-  \item human intervention and reset protocol
-  \item deployment logs and failure examples
+  \item offline validation: held-out trajectory, action distribution, invalid action rate, latency를 본다.
+  \item simulation or replay validation: sensor/action wrapper와 controller interface를 검증한다.
+  \item guarded real-robot validation: low speed, restricted workspace, human intervention, emergency stop, logging을 사용한다.
 \end{enumerate}
 
-이 standard가 없으면 real robot demo는 설득력 있는 anecdote일 수는 있어도 재현 가능한 evidence가 되기 어렵다.
+성공률 하나만으로는 충분하지 않다.
+\begin{align}
+  M_{deploy}
+  =
+  (&R_{success},
+  R_{invalid},
+  R_{saturation},
+  T_{infer}, \notag\\
+  &
+  E_{tracking},
+  R_{intervention},
+  R_{recovery}).
+  \label{eq:ch15-deployment-metrics}
+\end{align}
+이 지표들은 Chapter 17의 evaluation protocol로 이어진다.
 
-\begin{casebox}{Case study: LIBERO/SimplerEnv reporting audit}
-LIBERO와 SimplerEnv류 benchmark는 VLA와 robot policy 평가를 더 재현 가능하게 만들기 위한 중요한 시도이다 \cite{libero2023,simplerenv2024}. 그러나 benchmark가 있다는 사실만으로 Real VLA claim이 닫히지는 않는다. benchmark가 무엇을 통제하고 무엇을 생략하는지 따로 읽어야 한다.
+\section{Case-study roles}
 
-\begin{center}
-\small
-\begin{tabularx}{\linewidth}{@{}p{0.22\linewidth}X X@{}}
-\toprule
-항목 & 확인할 것 & 빠지면 약해지는 claim \\
-\midrule
-Task split & object, scene, language, temporal split이 분리되는가 & memorized layout이나 template shortcut 가능성 \\
-Action wrapper & token/vector/chunk가 simulator command로 어떻게 변환되는가 & action representation 비교의 공정성 \\
-Reset protocol & 실패 후 reset과 initial condition이 기록되는가 & success rate의 variance 해석 \\
-Real transfer & real robot spot check 또는 dynamics stress가 있는가 & simulator comfort를 real capability로 오해할 위험 \\
-\bottomrule
-\end{tabularx}
-\end{center}
+이 장에서 최신 오픈소스/프로젝트 사례는 다음 역할로 읽는다.
+\begin{table}[h]
+  \centering
+  \caption{Adaptation ecosystem의 case-study 역할}
+  \begin{tabularx}{\linewidth}{p{0.2\linewidth}X X}
+    \toprule
+    Case & 이 장에서의 역할 & 읽을 때의 주의점 \\
+    \midrule
+    Octo & generalist robot policy와 빠른 sensor/action adaptation의 사례 & dataset/action schema가 target robot과 맞는지 확인 \\
+    OpenVLA & open-source VLA backbone과 robot action fine-tuning의 기준점 & token/action interface와 latency를 함께 봐야 함 \\
+    OpenVLA-OFT & continuous action, chunking, practical fine-tuning recipe의 사례 & project/report claim과 independent validation 구분 \\
+    FAST & efficient action tokenization과 compression의 사례 & tokenizer가 physical frequency structure를 보존하는지 확인 \\
+    VLA Foundry & LLM/VLM/VLA training stack 통합의 engineering 사례 & framework capability와 model capability를 구분 \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:ch15-case-study}
+\end{table}
 
-따라서 benchmark 결과를 인용할 때는 score와 함께 protocol card를 읽어야 한다. Real VLA 평가의 핵심은 ``몇 점인가''가 아니라 ``어떤 조건에서 그 점수가 의미를 갖는가''이다.
+이름을 외우는 것보다 중요한 것은 각 사례가 어떤 adaptation boundary를 건드리는지 보는 것이다.
+
+\begin{casebox}{Case study: OpenVLA-OFT as action-interface adaptation}
+OpenVLA-OFT는 단순히 OpenVLA를 더 학습한 사례가 아니라 continuous action, action chunking, decoding speed, fine-tuning objective가 target robot deployment claim을 어떻게 바꾸는지 보여주는 사례다 \cite{openvlaoft2025}. Real VLA 관점의 질문은 성능 수치 하나가 아니라, target controller가 어떤 action을 받고 chunk interruption과 stale action을 어떻게 처리하는가이다.
 \end{casebox}
 
+\section{Deployment checklist}
+
+\begin{enumerate}
+  \item target robot의 action type, frame, frequency, controller를 명시했는가?
+  \item source model의 action representation과 target action representation이 같은가?
+  \item action normalization과 clipping이 robot-specific으로 검증되었는가?
+  \item fine-tuning data에 failure, correction, intervention이 포함되어 있는가?
+  \item LoRA/adapter/full fine-tuning 중 선택 이유가 data size와 domain gap에 맞는가?
+  \item offline metric, replay/sim metric, guarded real metric을 분리했는가?
+  \item deployment log가 다음 data engine loop로 들어가는가?
+\end{enumerate}
+
 \chapterwork
-{LIBERO, CALVIN, ManiSkill, SimplerEnv를 benchmark score가 아니라 protocol evidence로 읽어라 \cite{libero2023,calvin2022,maniskill22023,simplerenv2024}.}
-{같은 success rate를 가진 두 VLA system이 서로 다른 robot capability를 가질 수 있는 이유는 무엇인가?}
-{mug/rack/glass task에 대해 success, unsafe event, intervention, recovery, latency, tracking error를 포함한 evaluation report template을 작성하라.}
+{Octo, OpenVLA, OpenVLA-OFT, FAST, VLA Foundry를 adaptation target과 evidence tier 관점에서 비교하라 \cite{octo2024,openvla2024,openvlaoft2025,fast2025,vlafoundry2026}.}
+{pretrained VLA를 target robot에 맞출 때 sensor remapping보다 action normalization이 더 위험할 수 있는 이유는 무엇인가?}
+{source VLA와 target robot이 다를 때 sensor adapter, action head, normalization, validation split, safety wrapper를 포함한 adaptation plan을 작성하라.}
 
 \section{요약}
 
-Evaluation의 목적은 높은 success rate를 기록하는 것이 아니라, 어떤 capability가 어떤 조건에서 재현 가능하고 어떤 조건에서 무너지는지를 분리해서 증명하는 것이다. Benchmark는 필요하다. 하지만 benchmark score는 특정 protocol의 evidence이지 실제 robot capability 그 자체가 아니다. Real VLA 평가에서는 success rate와 함께 failure taxonomy, robustness shift, latency, tracking, safety intervention, recovery, statistical confidence를 보고해야 한다.
+Adaptation은 VLA를 특정 robot system에 연결하는 과정이다. 이는 prompt engineering도 아니고 마지막 layer 학습만도 아니다. sensor remapping, action normalization, embodiment adapter, action head tuning, LoRA/full fine-tuning, data mixture, safety wrapper, validation protocol이 모두 포함된다. small data에서는 pretrained representation을 보존해야 하지만, target robot의 action/control boundary를 충분히 바꾸지 못하면 task는 실패한다. aggressive fine-tuning은 성능을 올릴 수 있지만 forgetting과 unsafe overfitting을 만든다.
 
-다음 장에서는 evaluation에서 드러난 한계가 hierarchical VLA와 embodied reasoning 구조로 어떻게 이어지는지 다룬다.
+다음 장에서는 fine-tuned VLA가 실제로 잘하는지 어떻게 주장할 수 있는지, benchmark와 evaluation protocol을 다룬다.

@@ -1,312 +1,365 @@
-\chapter{Adaptation and Fine-Tuning}
+\chapter{Data Engines}
 
 \section*{학습 목표}
 
-범용 VLA가 있다고 해서 곧바로 모든 연구실의 로봇을 잘 움직이는 것은 아니다. robot마다 camera pose, gripper, action frequency, joint limit, calibration, table height, object distribution, controller wrapper가 다르다. 따라서 adaptation과 fine-tuning은 선택 사항이 아니라 deployment process의 일부다. 이 장은 foundation VLA를 특정 robot/task/action space에 맞추는 engineering recipe를 정리한다.
+이 장은 VLA 성능을 model architecture만으로 설명하지 않는다. Real VLA의 성능은 어떤 embodiment에서, 어떤 action representation으로, 어떤 language와 success/failure context를 붙여 데이터를 수집하고, 정제하고, 평가하고, 다시 배치하는지에 의해 결정된다. Open X-Embodiment, BridgeData, DROID, ALOHA, LIBERO, CALVIN, ManiSkill 같은 흐름은 모두 데이터가 단순한 파일 묶음이 아니라 data engine임을 보여준다.
 
 \begin{enumerate}
-  \item VLA adaptation이 단순 마지막 layer 학습이 아님을 이해한다.
-  \item prompt, sensor, action head, adapter, LoRA, full fine-tuning의 차이를 구분한다.
-  \item embodiment/action normalization과 catastrophic forgetting 문제를 정식화한다.
-  \item offline evaluation에서 real-robot validation으로 넘어가는 protocol을 설계한다.
+  \item robot data가 web data와 다른 이유를 설명한다.
+  \item demonstration, teleoperation, simulation, synthetic data, human video의 역할과 한계를 구분한다.
+  \item action representation과 dataset schema가 어떻게 연결되는지 정식화한다.
+  \item failure, correction, intervention data가 Real VLA에서 왜 필수인지 이해한다.
 \end{enumerate}
 
-\section{Why adaptation is unavoidable}
+\section{Robot data is not web data}
 
-pretrained VLA policy를 다음과 같이 쓰자.
+웹 데이터는 주로 text, image, video의 통계적 co-occurrence를 제공한다. robot data는 여기에 physical execution이 붙는다. 같은 이미지와 같은 instruction이라도 robot embodiment, camera calibration, gripper type, controller mode, action representation이 다르면 데이터의 의미가 달라진다. Open X-Embodiment와 RT-X 계열이 보여준 핵심도 단순히 데이터를 많이 모으는 것이 아니라, 여러 embodiment의 robot trajectory를 공통 schema로 묶어 transfer question을 실험 가능하게 만드는 데 있다 \cite{openx2023}.
+
+robot trajectory dataset을 다음과 같이 쓰자.
 \begin{equation}
-  \act_t
-  \sim
-  \pi_{\theta_0}
-  (\cdot \mid \obs_{\leq t},\ell,\conf_t,m_0).
-  \label{eq:ch15-pretrained-policy}
-\end{equation}
-여기서 $m_0$는 pretraining data의 implicit metadata이다. 실제 배치 대상 robot은 $m_{\star}$를 갖는다. adaptation은 다음 mismatch를 줄이는 과정이다.
-\begin{equation}
-  \Delta_m
+  \mathcal{D}
   =
-  d(m_0,m_{\star})
-  =
-  d_{sensor}
-  +
-  d_{action}
-  +
-  d_{embodiment}
-  +
-  d_{task}
-  +
-  d_{controller}.
-  \label{eq:ch15-metadata-mismatch}
+  \{
+  (\obs_{1:T}^{(i)},\conf_{1:T}^{(i)},\act_{1:T}^{(i)},\ell^{(i)},m^{(i)},y^{(i)})
+  \}_{i=1}^{N}.
+  \label{eq:ch14-dataset}
 \end{equation}
-이 mismatch가 작으면 prompt나 action normalization만으로 충분할 수 있다. mismatch가 크면 action head, vision encoder, language backbone, controller wrapper까지 조정해야 한다.
+여기서 $m^{(i)}$는 metadata이고, $y^{(i)}$는 outcome label이다. VLA에서 $m^{(i)}$는 선택 사항이 아니다. robot model, camera pose, action normalization, controller frequency, teleoperation interface, success criterion이 들어가야 한다.
 
-adaptation을 너무 약하게 하면 robot-specific behavior를 얻지 못한다. 너무 강하게 하면 pretrained representation을 망가뜨리거나 unsafe overfitting이 생긴다. 이 장의 핵심은 어디를 얼마나 바꿀지 결정하는 것이다.
-
-\section{Adaptation targets}
-
-VLA adaptation target은 여러 층에 있다.
-\begin{table}[h]
-  \centering
-  \caption{VLA adaptation target}
-  \begin{tabularx}{\linewidth}{p{0.22\linewidth}X X}
-    \toprule
-    Target & 무엇을 바꾸는가 & 적합한 상황 \\
-    \midrule
-    Prompt/template & instruction style, task wording & model capability는 충분하지만 language convention이 다를 때 \\
-    Sensor remapping & camera crop, calibration, proprioception channel & observation schema가 다를 때 \\
-    Action wrapper & normalization, clipping, frame convention & action space는 유사하지만 scale/rate가 다를 때 \\
-    Action head & token/vector/chunk decoder & robot action type이 달라질 때 \\
-    Adapter/LoRA & 일부 low-rank parameter update & data가 작고 pretrained representation을 보존해야 할 때 \\
-    Full fine-tuning & backbone까지 update & domain gap이 크고 충분한 data/evaluation이 있을 때 \\
-    Controller wrapper & safety, tracking, smoothing, rate conversion & model output과 robot controller가 직접 맞지 않을 때 \\
-    \bottomrule
-  \end{tabularx}
-  \label{tab:ch15-adaptation-targets}
-\end{table}
-
-Open-source VLA 생태계에서 Octo, OpenVLA, OpenVLA-OFT, FAST, VLA Foundry 같은 흐름은 이 target들을 서로 다른 방식으로 다룬다 \cite{octo2024,openvla2024,openvlaoft2025,fast2025,vlafoundry2026}. 이 책에서는 이들을 특정 성능 수치의 증거가 아니라, adaptation design space를 보여주는 case study로 취급한다.
-
-\section{Action head adaptation}
-
-Chapter 13의 관점에서 가장 중요한 fine-tuning 대상은 action head이다. pretrained representation $h_t$가 주어졌을 때 action head는 다음 mapping을 만든다.
+robot data가 어려운 이유는 action이 physical system에 묶여 있기 때문이다.
 \begin{equation}
-  \act_t
-  =
-  g_{\phi}(h_t,\conf_t).
-  \label{eq:ch15-action-head}
-\end{equation}
-robot이 바뀌면 $g_{\phi}$의 output type이 달라질 수 있다. 예를 들어 source model이 token action을 내는데 target robot은 continuous delta pose를 요구할 수 있다.
-\begin{equation}
-  g_{\phi}^{source}: h_t \mapsto z_t,
-  \qquad
-  g_{\phi}^{target}: h_t \mapsto \Delta x_t.
-  \label{eq:ch15-head-replacement}
-\end{equation}
-이 경우 full backbone보다 action head와 wrapper를 먼저 조정하는 것이 보수적이다. backbone은 semantic perception을 유지하고, target-specific motor interface만 바꾼다.
-
-\section{Embodiment adapter}
-
-multi-embodiment adaptation에서는 robot metadata를 policy에 명시적으로 넣는 것이 유리하다.
-\begin{equation}
-  e_{\star}
-  =
-  E_{\eta}(m_{\star}),
-  \qquad
   \act_t
   \sim
   \pi_{\theta}
-  (\cdot\mid \obs_{\leq t},\ell,\conf_t,e_{\star}).
-  \label{eq:ch15-embodiment-adapter}
+  (\cdot \mid \obs_{\leq t},\ell,m),
+  \label{eq:ch14-policy-with-metadata}
 \end{equation}
-여기서 $E_{\eta}$는 embodiment adapter이다. 이 adapter는 kinematics, action scale, camera calibration, gripper type 같은 정보를 representation에 넣는다.
+metadata $m$이 빠지면 policy는 서로 다른 robot의 action을 같은 의미로 오해할 수 있다.
 
-adapter가 없으면 model은 robot-specific difference를 observation distribution에서 암묵적으로 추론해야 한다. 이는 data가 많을 때는 가능할 수 있지만, small fine-tuning에서는 불안정하다.
+\section{Data engine loop}
 
-\section{LoRA, adapter tuning, and full fine-tuning}
-
-parameter-efficient tuning의 한 예는 low-rank update이다.
+Data engine은 단순히 dataset을 모으는 과정이 아니다. 반복적인 system loop이다.
 \begin{equation}
-  W'
+  \mathcal{D}_{k+1}
   =
-  W
-  +
-  \Delta W,
+  \mathcal{D}_{k}
+  \cup
+  \mathrm{Collect}
+  (
+  \pi_{\theta_k},
+  \mathcal{T}_{k},
+  \mathcal{E}_{k}
+  ),
   \qquad
-  \Delta W
+  \theta_{k+1}
   =
-  BA,
-  \quad
-  \mathrm{rank}(\Delta W)\ll \mathrm{rank}(W).
-  \label{eq:ch15-lora}
+  \mathrm{Train}(\mathrm{Curate}(\mathcal{D}_{k+1})).
+  \label{eq:ch14-data-loop}
 \end{equation}
-이 방식은 pretrained representation을 크게 바꾸지 않고 target data에 적응할 수 있다. small dataset에서는 full fine-tuning보다 안정적일 수 있다.
+여기서 $\mathcal{T}_{k}$는 task distribution, $\mathcal{E}_{k}$는 environment/embodiment distribution이다. evaluation은 이 loop의 밖에 있지 않다. 평가 결과는 어떤 data를 더 모아야 하는지 결정한다.
 
-하지만 parameter-efficient tuning이 항상 충분한 것은 아니다. camera modality가 크게 바뀌거나, action representation이 바뀌거나, target task가 pretraining distribution 밖이면 action head와 일부 encoder를 함께 조정해야 할 수 있다.
+\begin{equation}
+  \Delta\mathcal{D}_{k}
+  =
+  \mathrm{Prioritize}
+  (
+  \mathrm{Failures}(\pi_{\theta_k}),
+  \mathrm{CoverageGap}(\mathcal{D}_k),
+  \mathrm{SafetyEvents}_k
+  ).
+  \label{eq:ch14-data-prioritize}
+\end{equation}
+Real VLA에서 좋은 data engine은 많이 모으는 engine이 아니라, 다음 실패를 줄이는 data를 우선순위화하는 engine이다.
+
+\section{Data record schema}
+
+VLA data record는 최소한 다음 fields를 가져야 한다.
+\begin{equation}
+  r_i
+  =
+  (
+  \obs_{1:T},
+  \conf_{1:T},
+  \act_{1:T},
+  \ell,
+  g,
+  e,
+  c,
+  y,
+  q
+  ).
+  \label{eq:ch14-record-schema}
+\end{equation}
+여기서 $g$는 goal 또는 subgoal, $e$는 embodiment metadata, $c$는 controller/action metadata, $y$는 outcome, $q$는 quality label이다.
 
 \begin{table}[h]
   \centering
-  \caption{Fine-tuning 방식의 trade-off}
+  \caption{VLA data record에 필요한 주요 field}
   \begin{tabularx}{\linewidth}{p{0.2\linewidth}X X}
     \toprule
-    Method & 장점 & 위험 \\
+    Field & Example & 왜 필요한가 \\
     \midrule
-    Frozen backbone + new head & 안정적이고 data-efficient & semantic-action mismatch가 남을 수 있음 \\
-    Adapter / LoRA & forgetting을 줄이고 비용이 낮음 & 큰 domain gap에는 부족할 수 있음 \\
-    Partial fine-tuning & 필요한 module만 바꿀 수 있음 & 어떤 layer를 열지 결정이 어려움 \\
-    Full fine-tuning & target domain에 강하게 적응 & catastrophic forgetting, unsafe overfitting, 큰 검증 비용 \\
+    Observation & image, depth, tactile, proprioception & policy input과 sensor assumption 정의 \\
+    Action & token, delta pose, chunk, command & Chapter 14의 action contract 연결 \\
+    State/configuration & joint, gripper, base, calibration & feasibility와 embodiment grounding \\
+    Language & instruction, correction, annotation & task semantics와 ambiguity 처리 \\
+    Metadata & robot, camera, controller, rate & multi-embodiment/action normalization \\
+    Outcome & success, failure, partial success & evaluation과 failure mining \\
+    Quality & human rating, anomaly, uncertainty & curation과 weighting \\
     \bottomrule
   \end{tabularx}
-  \label{tab:ch15-ft-methods}
+  \label{tab:ch14-record-schema}
 \end{table}
 
-\section{Fine-tuning objective}
+이 schema가 없으면 dataset은 커져도 해석 가능성이 낮다. 특히 action field가 모호하면 training loss와 deployment command 사이의 의미가 달라진다.
 
-target dataset $\mathcal{D}_{target}$에 대해 behavior cloning loss를 쓰면
+\section{Robot dataset card}
+
+출판 가능한 VLA paper 또는 재사용 가능한 robot dataset은 dataset card를 가져야 한다. dataset card는 marketing summary가 아니라 action, controller, embodiment, failure evidence를 복원하기 위한 최소 기록이다.
+
+\begin{table}[h]
+  \centering
+  \small
+  \caption{Robot Dataset Card 최소 양식}
+  \begin{tabularx}{\linewidth}{@{}p{0.28\linewidth}X@{}}
+    \toprule
+    Field & 반드시 기록할 내용 \\
+    \midrule
+    Robot embodiment & robot model, arm/hand/gripper, mobile base, joint limits, payload limit \\
+    Camera setup & camera pose, calibration, frame convention, synchronization, occlusion pattern \\
+    Action representation & token, delta pose, joint target, chunk, trajectory, torque, action rate \\
+    Controller & servo, impedance, OSC, WBC, gripper controller, low-level safety limit \\
+    Teleoperation interface & VR, leader-follower, keyboard, scripted policy, autonomy-assisted collection \\
+    Reset policy & manual reset, scripted reset, object randomization, failure reset rule \\
+    Failure labels & slip, collision, no grasp, wrong object, timeout, unsafe proximity, operator intervention \\
+    Human intervention & intervention trigger, correction action, recovery trajectory, abort reason \\
+    Safety events & rejected action, force limit, emergency stop, watchdog fallback, human near miss \\
+    Train/eval split & task split, object split, scene split, embodiment split, temporal split \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:ch14-dataset-card}
+\end{table}
+
+BridgeData, DROID, ALOHA/ACT, LIBERO, CALVIN, HuLC/What Matters, ManiSkill 같은 이름을 본문에 나열하는 것만으로는 data claim이 강해지지 않는다 \cite{bridgedatav22023,droid2024,act2023,libero2023,calvin2022,hulc2022,maniskill22023}. 중요한 것은 각 dataset이 어떤 embodiment, action interface, controller, reset policy, failure label을 제공하는지이다. 이 표를 채울 수 없는 dataset은 VLA training에는 쓸 수 있어도 Real VLA system claim을 검토하기에는 약하다.
+
+\begin{casebox}{Case study: dataset 이름보다 dataset card}
+Open X-Embodiment, DROID, ALOHA는 모두 robot learning data를 제공하지만, Real VLA 관점에서 같은 종류의 evidence가 아니다 \cite{openx2023,droid2024,act2023}. Open X-Embodiment는 multi-embodiment transfer question을 만들고, DROID는 in-the-wild teleoperation scale과 diversity를 제공하며, ALOHA 계열은 bimanual manipulation과 low-cost teleoperation interface를 강하게 보여준다.
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{@{}p{0.2\linewidth}X X@{}}
+\toprule
+Dataset family & 강한 evidence & 약해질 수 있는 지점 \\
+\midrule
+Open X-Embodiment & embodiment mixture와 shared training protocol & robot별 controller/action metadata의 해석 난도 \\
+DROID & diverse real-world scenes와 teleoperation scale & task/failure label consistency와 reset protocol \\
+ALOHA & bimanual action, teleoperation, contact-rich manipulation & domain breadth와 long-tail failure coverage \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+따라서 dataset 비교는 sample count로 끝나면 안 된다. action representation, collection interface, failure labels, split rule, intervention policy를 같이 비교해야 VLA training evidence가 deployment evidence로 얼마나 이어지는지 판단할 수 있다.
+\end{casebox}
+
+\section{Demonstration collection}
+
+robot demonstration은 여러 방식으로 수집된다.
+\begin{table}[h]
+  \centering
+  \caption{Data source comparison}
+  \begin{tabularx}{\linewidth}{p{0.18\linewidth}X X}
+    \toprule
+    Source & 장점 & 한계 \\
+    \midrule
+    Teleoperation & real robot action과 human strategy를 직접 수집 & operator bias, device mapping, fatigue \\
+    Kinesthetic teaching & contact-rich motion과 force cue를 직관적으로 전달 & robot type과 task setup에 제한 \\
+    Scripted policy & 대량 반복과 label consistency가 좋음 & diversity와 recovery behavior가 부족 \\
+    Autonomous collection & policy distribution의 실제 failure를 수집 가능 & safety monitor와 reset cost가 필요 \\
+    Simulation & scale, controlled variation, rare event generation & sim-to-real gap, contact model mismatch \\
+    Human video & semantic prior와 task diversity가 큼 & robot action label과 embodiment grounding이 없음 \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:ch14-data-sources}
+\end{table}
+
+중요한 것은 source를 섞는 방식이다. data mixture를 다음과 같이 쓸 수 있다.
 \begin{equation}
-  \mathcal{L}_{target}
+  \mathcal{D}
   =
-  -
-  \mathbb{E}_{(\obs,\ell,\act)\sim\mathcal{D}_{target}}
-  \log
-  \pi_{\theta}(\act\mid\obs,\ell).
-  \label{eq:ch15-target-loss}
-\end{equation}
-그러나 target data가 작으면 overfitting과 forgetting이 생긴다. 따라서 source policy와의 regularization을 추가할 수 있다.
-\begin{equation}
+  \bigcup_{j=1}^{J}
+  \mathcal{D}_{j},
+  \qquad
   \mathcal{L}
   =
-  \mathcal{L}_{target}
-  +
-  \lambda
-  D_{KL}
-  (
-  \pi_{\theta}(\cdot\mid\obs,\ell)
-  \|
-  \pi_{\theta_0}(\cdot\mid\obs,\ell)
-  )
-  +
-  \beta
-  \mathcal{L}_{safe}.
-  \label{eq:ch15-regularized-ft}
-\end{equation}
-여기서 $\mathcal{L}_{safe}$는 unsafe action penalty, constraint violation penalty, 또는 safety classifier loss가 될 수 있다.
-
-\section{Data mixture for adaptation}
-
-adaptation data는 success-only demonstration으로 충분하지 않다.
-\begin{equation}
-  \mathcal{D}_{adapt}
-  =
-  \mathcal{D}_{demo}
-  \cup
-  \mathcal{D}_{correction}
-  \cup
-  \mathcal{D}_{failure}
-  \cup
-  \mathcal{D}_{intervention}.
-  \label{eq:ch15-adaptation-data}
-\end{equation}
-small dataset에서는 data weighting이 중요하다.
-\begin{equation}
-  \mathcal{L}_{adapt}
-  =
-  \sum_{j}
+  \sum_{j=1}^{J}
   w_j
   \mathbb{E}_{r\sim\mathcal{D}_j}
   [
   \ell_{\theta}(r)
   ].
-  \label{eq:ch15-adaptation-mixture}
+  \label{eq:ch14-data-mixture}
 \end{equation}
-failure와 correction data는 수가 적어도 target deployment에서는 큰 영향을 줄 수 있다. 특히 action chunking이나 continuous action objective를 쓰는 경우, correction data는 recovery behavior를 학습하는 핵심이다.
+weight $w_j$는 단순히 dataset size에 비례하면 안 된다. 작은 failure dataset이나 high-quality correction dataset이 큰 success-only dataset보다 특정 failure mode에는 더 중요할 수 있다.
 
-\section{Action normalization and calibration}
+\section{Action normalization and embodiment metadata}
 
-fine-tuning에서 action normalization은 단순 preprocessing이 아니다. target robot의 physical scale을 정하는 calibration step이다.
+multi-embodiment VLA에서 가장 흔한 함정은 action normalization이다. robot $e$마다 action scale과 controller mode가 다르면 같은 normalized vector가 다른 physical command가 된다.
 \begin{equation}
-  \act_t^{phys}
+  \act^{phys}_{t,e}
   =
-  \sigma_{\star}
+  \sigma_{e}
   \odot
-  \act_t^{norm}
+  \act^{norm}_{t}
   +
-  \mu_{\star},
-  \qquad
-  \act_t^{safe}
-  =
-  \mathrm{Clip}
-  (\act_t^{phys},\mathcal{U}_{safe}).
-  \label{eq:ch15-action-calibration}
+  \mu_{e}.
+  \label{eq:ch14-embodiment-denorm}
 \end{equation}
-이 식에서 $\mu_{\star},\sigma_{\star}$와 $\mathcal{U}_{safe}$는 robot-specific이다. 잘못된 scale은 성공률 문제 이전에 safety issue가 된다.
-
-calibration은 반드시 offline sanity check와 real robot low-speed test를 거쳐야 한다.
+따라서 dataset card에는 최소한 다음 정보를 포함해야 한다.
 \begin{equation}
-  \mathrm{Ready}
+  m_e
+  =
+  (
+  \mathrm{robot},
+  \mathrm{kinematics},
+  \mathrm{controller},
+  f_{ctrl},
+  \mathrm{action\ type},
+  \mu_e,
+  \sigma_e
+  ).
+  \label{eq:ch14-embodiment-card}
+\end{equation}
+
+metadata가 빠진 multi-robot dataset은 scale만 커질 수 있다. 반대로 잘 정의된 embodiment metadata는 transfer learning과 adapter 설계의 기반이 된다.
+
+\section{Failure, correction, and recovery data}
+
+성공 trajectory만 모으면 policy는 성공 직전의 분포를 많이 보지만, 실패에서 빠져나오는 법을 배우지 못한다. Real VLA data engine은 다음 네 종류를 분리해야 한다.
+\begin{equation}
+  \mathcal{D}
+  =
+  \mathcal{D}_{success}
+  \cup
+  \mathcal{D}_{failure}
+  \cup
+  \mathcal{D}_{correction}
+  \cup
+  \mathcal{D}_{intervention}.
+  \label{eq:ch14-success-failure-data}
+\end{equation}
+
+failure record는 단순히 실패했다는 label이 아니라 원인을 포함해야 한다.
+\begin{equation}
+  f_i
+  =
+  (
+  \mathrm{stage},
+  \mathrm{symptom},
+  \mathrm{sensor\ evidence},
+  \mathrm{constraint},
+  \mathrm{recovery\ action}
+  ).
+  \label{eq:ch14-failure-record}
+\end{equation}
+예를 들어 grasp failure라도 perception error, slip, collision, insufficient force, wrong frame convention은 서로 다른 failure이다. 이 차이를 기록하지 않으면 data engine은 같은 실패를 계속 반복한다.
+
+\section{Simulation, synthetic data, and human video}
+
+simulation은 coverage를 준다. rare event, domain randomization, controlled ablation, benchmark repeatability에 강하다. 그러나 contact, sensor noise, deformable object, human proximity에서는 sim-to-real gap이 생긴다.
+\begin{equation}
+  \Delta_{sim2real}
+  =
+  d
+  (
+  p_{sim}(\obs,\act,y),
+  p_{real}(\obs,\act,y)
+  ).
+  \label{eq:ch14-sim2real-gap}
+\end{equation}
+여기서 $d$는 distribution distance를 나타내는 추상 notation이다. 중요한 것은 simulation score가 real deployment evidence로 자동 변환되지 않는다는 점이다.
+
+human video는 task semantics와 object interaction prior를 제공할 수 있다. 그러나 robot action label이 없다.
+\begin{equation}
+  \mathrm{HumanVideo}
+  =
+  (\mathrm{visual\ task\ prior})
+  \neq
+  (\mathrm{robot\ action\ supervision}).
+  \label{eq:ch14-human-video-gap}
+\end{equation}
+따라서 human video는 pretraining, affordance prior, goal recognition에는 유용하지만, controller-compatible action label을 대신하지 않는다.
+
+\section{Curation and relabeling}
+
+data engine의 품질은 수집보다 curation에서 갈리는 경우가 많다. curation은 bad sample을 버리는 과정만이 아니다. annotation schema를 통일하고, action type을 명시하고, failure를 taxonomy로 분류하고, train/eval leakage를 막는 과정이다.
+
+\begin{equation}
+  \mathcal{D}^{clean}
+  =
+  \mathrm{Filter}
+  (
+  \mathrm{Relabel}
+  (
+  \mathrm{Normalize}
+  (
+  \mathcal{D}^{raw}
+  )
+  )
+  ).
+  \label{eq:ch14-curation}
+\end{equation}
+
+language relabeling도 중요하다. 같은 trajectory는 여러 instruction으로 표현될 수 있다. 하지만 relabeling이 실제 goal과 맞지 않으면 policy는 language grounding을 잘못 배운다.
+\begin{equation}
+  \ell'
+  =
+  R(\tau),
+  \qquad
+  \mathrm{Accept}(\ell')
   =
   \mathbb{I}
   [
-  \mathrm{SchemaCheck}
-  \land
-  \mathrm{ScaleCheck}
-  \land
-  \mathrm{SafetyCheck}
-  \land
-  \mathrm{LatencyCheck}
+  \mathrm{GoalConsistent}(\ell',\tau)=1
   ].
-  \label{eq:ch15-readiness}
+  \label{eq:ch14-relabel-accept}
 \end{equation}
 
-\section{Validation protocol}
+\section{Data quality metrics}
 
-fine-tuning된 policy는 곧바로 full-speed real robot에 올리면 안 된다. 최소 세 단계가 필요하다.
-\begin{enumerate}
-  \item offline validation: held-out trajectory, action distribution, invalid action rate, latency를 본다.
-  \item simulation or replay validation: sensor/action wrapper와 controller interface를 검증한다.
-  \item guarded real-robot validation: low speed, restricted workspace, human intervention, emergency stop, logging을 사용한다.
-\end{enumerate}
-
-성공률 하나만으로는 충분하지 않다.
+data engine은 dataset size만 보고 평가하면 안 된다. 최소한 다음 지표가 필요하다.
 \begin{align}
-  M_{deploy}
-  =
-  (&R_{success},
-  R_{invalid},
-  R_{saturation},
-  T_{infer}, \notag\\
-  &
-  E_{tracking},
-  R_{intervention},
-  R_{recovery}).
-  \label{eq:ch15-deployment-metrics}
+  C_{task} &= \mathrm{Coverage}(\mathcal{T}_{train},\mathcal{T}_{target}), \\
+  C_{emb} &= \mathrm{Coverage}(\mathcal{E}_{train},\mathcal{E}_{target}), \\
+  Q_{action} &= \mathrm{Consistency}(\mathrm{action\ schema}), \\
+  Q_{fail} &= \frac{|\mathcal{D}_{failure}\cup\mathcal{D}_{recovery}|}{|\mathcal{D}|}, \\
+  Q_{leak} &= 1-\mathrm{LeakageRate}(\mathcal{D}_{train},\mathcal{D}_{eval}).
+  \label{eq:ch14-data-quality}
 \end{align}
-이 지표들은 Chapter 16의 evaluation protocol로 이어진다.
+이 지표는 완전한 표준이 아니라 data engine을 읽는 최소 lens이다.
 
-\section{Case-study roles}
+\section{Data engine and safety}
 
-이 장에서 최신 오픈소스/프로젝트 사례는 다음 역할로 읽는다.
-\begin{table}[h]
-  \centering
-  \caption{Adaptation ecosystem의 case-study 역할}
-  \begin{tabularx}{\linewidth}{p{0.2\linewidth}X X}
-    \toprule
-    Case & 이 장에서의 역할 & 읽을 때의 주의점 \\
-    \midrule
-    Octo & generalist robot policy와 빠른 sensor/action adaptation의 사례 & dataset/action schema가 target robot과 맞는지 확인 \\
-    OpenVLA & open-source VLA backbone과 robot action fine-tuning의 기준점 & token/action interface와 latency를 함께 봐야 함 \\
-    OpenVLA-OFT & continuous action, chunking, practical fine-tuning recipe의 사례 & project/report claim과 independent validation 구분 \\
-    FAST & efficient action tokenization과 compression의 사례 & tokenizer가 physical frequency structure를 보존하는지 확인 \\
-    VLA Foundry & LLM/VLM/VLA training stack 통합의 engineering 사례 & framework capability와 model capability를 구분 \\
-    \bottomrule
-  \end{tabularx}
-  \label{tab:ch15-case-study}
-\end{table}
-
-이름을 외우는 것보다 중요한 것은 각 사례가 어떤 adaptation boundary를 건드리는지 보는 것이다.
-
-\begin{casebox}{Case study: OpenVLA-OFT as action-interface adaptation}
-OpenVLA-OFT는 단순히 OpenVLA를 더 학습한 사례가 아니라 continuous action, action chunking, decoding speed, fine-tuning objective가 target robot deployment claim을 어떻게 바꾸는지 보여주는 사례다 \cite{openvlaoft2025}. Real VLA 관점의 질문은 성능 수치 하나가 아니라, target controller가 어떤 action을 받고 chunk interruption과 stale action을 어떻게 처리하는가이다.
-\end{casebox}
-
-\section{Deployment checklist}
-
-\begin{enumerate}
-  \item target robot의 action type, frame, frequency, controller를 명시했는가?
-  \item source model의 action representation과 target action representation이 같은가?
-  \item action normalization과 clipping이 robot-specific으로 검증되었는가?
-  \item fine-tuning data에 failure, correction, intervention이 포함되어 있는가?
-  \item LoRA/adapter/full fine-tuning 중 선택 이유가 data size와 domain gap에 맞는가?
-  \item offline metric, replay/sim metric, guarded real metric을 분리했는가?
-  \item deployment log가 다음 data engine loop로 들어가는가?
-\end{enumerate}
+unsafe data는 버리기만 할 대상이 아니다. 어떤 unsafe event는 policy가 피해야 할 negative evidence이고, 어떤 event는 safety monitor를 학습하거나 test하는 데 필요하다. 하지만 unsafe demonstration을 그대로 imitation target으로 쓰면 위험하다.
+\begin{equation}
+  \mathcal{D}_{unsafe}
+  \xrightarrow{\mathrm{label}}
+  \{
+  \mathrm{negative},
+  \mathrm{intervention},
+  \mathrm{shield\ test},
+  \mathrm{discard}
+  \}.
+  \label{eq:ch14-unsafe-routing}
+\end{equation}
+이 routing은 Chapter 20의 safety and assurance로 이어진다. data engine은 safety의 입력이다.
 
 \chapterwork
-{Octo, OpenVLA, OpenVLA-OFT, FAST, VLA Foundry를 adaptation target과 evidence tier 관점에서 비교하라 \cite{octo2024,openvla2024,openvlaoft2025,fast2025,vlafoundry2026}.}
-{pretrained VLA를 target robot에 맞출 때 sensor remapping보다 action normalization이 더 위험할 수 있는 이유는 무엇인가?}
-{source VLA와 target robot이 다를 때 sensor adapter, action head, normalization, validation split, safety wrapper를 포함한 adaptation plan을 작성하라.}
+{Open X-Embodiment, BridgeData, DROID, ALOHA/ACT, LIBERO, CALVIN, HuLC, ManiSkill을 dataset name이 아니라 evidence type으로 읽어라 \cite{openx2023,bridgedatav22023,droid2024,act2023,libero2023,calvin2022,hulc2022,maniskill22023}.}
+{robot data가 web data와 다른 가장 중요한 이유는 embodiment, controller, reset, failure label 중 어디에 있는가?}
+{새 robot dataset을 만든다고 가정하고 Robot Dataset Card의 모든 항목을 실제 수집 protocol로 변환하라.}
 
 \section{요약}
 
-Adaptation은 VLA를 특정 robot system에 연결하는 과정이다. 이는 prompt engineering도 아니고 마지막 layer 학습만도 아니다. sensor remapping, action normalization, embodiment adapter, action head tuning, LoRA/full fine-tuning, data mixture, safety wrapper, validation protocol이 모두 포함된다. small data에서는 pretrained representation을 보존해야 하지만, target robot의 action/control boundary를 충분히 바꾸지 못하면 task는 실패한다. aggressive fine-tuning은 성능을 올릴 수 있지만 forgetting과 unsafe overfitting을 만든다.
+VLA data는 많으면 좋은 파일 묶음이 아니다. Real VLA의 data engine은 수집, 정제, 라벨링, normalization, failure mining, evaluation, deployment log를 반복하는 system이다. robot data는 embodiment와 action representation에 묶여 있으므로 web data처럼 단순히 scale만 키우기 어렵다. teleoperation은 real behavior를 주지만 operator bias가 있고, simulation은 scale을 주지만 sim-to-real gap이 있으며, human video는 semantic prior를 주지만 robot action supervision은 아니다.
 
-다음 장에서는 fine-tuned VLA가 실제로 잘하는지 어떻게 주장할 수 있는지, benchmark와 evaluation protocol을 다룬다.
+다음 장에서는 이 data engine 위에서 모델을 실제 task와 robot에 맞게 적응시키는 방법을 다룬다. action head, adapter, fine-tuning, normalization, inference speed는 모두 data engine과 분리할 수 없다.

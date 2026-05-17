@@ -1,0 +1,315 @@
+\chapter{Future Directions}
+
+\section*{학습 목표}
+
+이 장은 Real VLA의 미래를 단순한 모델 크기 경쟁으로 보지 않는다. 앞으로의 VLA는 world model, online adaptation, self-improving data loop, multi-embodiment transfer, formal safety assurance, hardware-aware deployment가 결합된 robot system으로 발전할 가능성이 크다. 이 책의 결론은 VLA가 제어, 계획, 모션플래닝, 로봇러닝을 대체하지 않는다는 것이다. 오히려 VLA는 이들을 language와 vision을 통해 더 넓은 task space로 연결한다.
+
+\begin{enumerate}
+  \item Real VLA의 미래 시스템 구성 요소를 정리한다.
+  \item world model, data engine, safety assurance, deployment loop의 역할을 설명한다.
+  \item multi-embodiment transfer와 online adaptation의 조건을 정식화한다.
+  \item foundation model 시대의 roboticist가 가져야 할 시스템 관점을 정리한다.
+\end{enumerate}
+
+\section{Beyond bigger VLMs}
+
+VLA의 미래가 더 큰 VLM에 action head를 붙이는 방향만으로 정해지지는 않을 것이다. 큰 model은 semantic prior와 generalization을 제공하지만, robot deployment는 physical state, latency, controller, safety, data feedback loop를 요구한다. 미래의 Real VLA system은 다음 tuple에 가깝다.
+\begin{equation}
+  \mathcal{R}_{VLA}
+  =
+  (
+  \rho_{\psi},
+  \pi_{\theta},
+  \mathcal{W}_{\varphi},
+  \controller,
+  \mathcal{D},
+  \mathcal{M},
+  \mathcal{S},
+  \mathcal{E}
+  ).
+  \label{eq:ch22-real-vla-system}
+\end{equation}
+여기서 $\rho_{\psi}$는 embodied reasoning, $\pi_{\theta}$는 action policy, $\mathcal{W}_{\varphi}$는 world model, $\controller$는 controller, $\mathcal{D}$는 data engine, $\mathcal{M}$은 runtime monitor, $\mathcal{S}$는 safety case, $\mathcal{E}$는 evaluation protocol이다.
+
+\begin{definitionbox}{Future Real VLA}
+Future Real VLA는 language-conditioned action model 하나가 아니라, world model, policy, controller, data loop, safety assurance, hardware runtime이 닫힌 루프를 이루는 robot system이다. 핵심 성능은 benchmark score뿐 아니라 배치 후 실패를 측정하고 안전하게 개선하는 능력이다.
+\end{definitionbox}
+
+\section{World models}
+
+현재 VLA는 imitation과 pattern recognition에서 강하지만, hidden state, long-horizon consequence, physical causality, object permanence, tool use, failure recovery를 안정적으로 다루기 어렵다. world model은 이 한계를 줄이는 방향이다.
+\begin{equation}
+  p_{\varphi}
+  (
+  \state_{t+1},
+  \obs_{t+1},
+  r_t
+  \mid
+  \bel_t,
+  \act_t
+  )
+  \label{eq:ch22-world-model}
+\end{equation}
+는 action이 world state와 observation, reward 또는 task progress를 어떻게 바꾸는지 예측한다.
+
+world model은 video prediction model과 같지 않다. robot에 필요한 것은 모든 pixel을 잘 예측하는 것이 아니라 task-relevant state와 safety-relevant state를 예측하는 것이다.
+\begin{equation}
+  \mathcal{Z}_{rel}
+  =
+  (
+  x_{obj},
+  x_{ee},
+  c_{contact},
+  h_{human},
+  u_{uncertainty},
+  y_{success}
+  ).
+  \label{eq:ch22-relevant-state}
+\end{equation}
+미래의 VLA world model은 세 가지 기능을 가져야 한다.
+\begin{enumerate}
+  \item consequence prediction: 이 action이 task와 safety에 어떤 결과를 만드는가?
+  \item information gathering: 불확실할 때 어떤 관측을 더 해야 하는가?
+  \item counterfactual evaluation: 다른 action을 했으면 failure를 피할 수 있었는가?
+\end{enumerate}
+
+\section{Information gathering}
+
+robot은 모르면 행동하기 전에 봐야 한다. 불확실성을 줄이는 action도 policy의 일부다. 다음 action을 task reward만으로 고르지 않고 information gain을 함께 고려할 수 있다.
+\begin{equation}
+  \act_t^{*}
+  =
+  \arg\max_{\act}
+  \mathbb{E}
+  [
+  R(\state_t,\act,\ell)
+  +
+  \lambda I(\state_{t+1};\obs_{t+1}\mid \bel_t,\act)
+  -
+  \mu C_{risk}(\state_t,\act)
+  ].
+  \label{eq:ch22-info-action}
+\end{equation}
+이 식은 VLA가 항상 물체를 움직이는 action만 내야 하는 것이 아님을 보여준다. head를 돌려서 더 잘 보기, camera view를 바꾸기, drawer 안을 확인하기, 사람에게 질문하기도 embodied action이다.
+
+\section{Self-improving data loop}
+
+static pretrained VLA는 배치 후 새로운 object, scene, user, failure를 만난다. 따라서 future VLA는 deployment data를 다시 model improvement로 연결해야 한다.
+\begin{equation}
+  \mathcal{D}_{k+1}
+  =
+  \mathcal{D}_{k}
+  \cup
+  \mathcal{F}
+  (
+  \tau_{1:N}^{deploy},
+  h_{1:N}^{human},
+  f_{1:N}^{failure}
+  ).
+  \label{eq:ch22-data-loop}
+\end{equation}
+여기서 $\mathcal{F}$는 rollout, human feedback, failure label을 curated training data로 바꾸는 data engine이다.
+
+\begin{table}[h]
+  \centering
+  \caption{Self-improving VLA data loop}
+  \begin{tabularx}{\linewidth}{p{0.22\linewidth}X X}
+    \toprule
+    Stage & 하는 일 & 주요 risk \\
+    \midrule
+    Deploy & policy rollout과 log 수집 & unsafe exploration, logging gap \\
+    Diagnose & failure taxonomy와 root cause 분석 & superficial label, hidden intervention \\
+    Curate & correction, near-miss, recovery data 구성 & biased sampling, duplicate shortcut \\
+    Train & adapter, action head, policy update & forgetting, overfit, safety regression \\
+    Gate & offline, sim, real-robot validation & weak benchmark, untested shift \\
+    Release & versioned deployment와 rollback 준비 & config drift, calibration mismatch \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:ch22-data-loop}
+\end{table}
+
+이 loop는 자동화될 수 있지만 완전히 무감독이면 안 된다. robot data는 physical risk를 갖기 때문에 release gate가 필요하다.
+
+\section{Safe online adaptation}
+
+online adaptation은 매력적이지만 위험하다. policy update가 안전성 regression을 만들 수 있기 때문이다. update $\theta_k \rightarrow \theta_{k+1}$는 다음 gate를 통과해야 한다.
+\begin{equation}
+  \begin{aligned}
+  \mathrm{Accept}(\theta_{k+1})
+  =
+  \mathbb{I}
+  [&
+  M_{task}(\theta_{k+1}) \geq M_{task}(\theta_k)-\epsilon_t
+  \wedge\\
+  &
+  M_{safe}(\theta_{k+1}) \geq M_{safe}(\theta_k)-\epsilon_s
+  \wedge\\
+  &
+  R(\theta_{k+1}) \leq R_{max}
+  ].
+  \end{aligned}
+  \label{eq:ch22-release-gate}
+\end{equation}
+task metric이 조금 좋아져도 safety metric이 나빠지면 release해서는 안 된다.
+
+safe online adaptation은 다음 세 가지를 요구한다.
+\begin{enumerate}
+  \item update scope 제한: action head, adapter, calibration parameter 등부터 조정한다.
+  \item rollback 가능성: 새 model이 실패하면 즉시 이전 version으로 돌아간다.
+  \item audit log: 어떤 data와 어떤 metric으로 update가 승인되었는지 남긴다.
+\end{enumerate}
+
+\section{Multi-embodiment transfer}
+
+미래 VLA의 핵심 질문 중 하나는 여러 robot embodiment 사이의 transfer이다. 같은 instruction도 gripper, arm length, camera pose, base mobility, controller가 다르면 action이 달라진다.
+\begin{equation}
+  \act_t^{(e)}
+  \sim
+  \pi_{\theta}
+  (
+  \cdot
+  \mid
+  \obs_{\leq t}^{(e)},
+  \ell,
+  a_e
+  ),
+  \label{eq:ch22-embodiment-conditioned}
+\end{equation}
+여기서 $e$는 embodiment, $a_e$는 embodiment descriptor 또는 adapter이다.
+
+transfer는 다음 세 layer로 나누어야 한다.
+\begin{enumerate}
+  \item semantic transfer: 같은 task instruction과 object relation을 이해한다.
+  \item geometric transfer: robot morphology에 맞는 reachability와 frame을 계산한다.
+  \item control transfer: action scale, frequency, controller wrapper를 맞춘다.
+\end{enumerate}
+
+\begin{table}[h]
+  \centering
+  \caption{Multi-embodiment transfer의 실패 모드}
+  \begin{tabularx}{\linewidth}{p{0.24\linewidth}X X}
+    \toprule
+    Failure & 원인 & 대응 \\
+    \midrule
+    Same word, different action & gripper와 controller convention 차이 & embodiment descriptor, action schema \\
+    Reachability mismatch & arm length와 base mobility 차이 & geometric feasibility layer \\
+    Sensor mismatch & camera pose, FOV, depth quality 차이 & sensor adapter, calibration report \\
+    Dynamics mismatch & payload, compliance, speed limit 차이 & controller-aware action scaling \\
+    Safety mismatch & human proximity와 force limit 차이 & robot-specific safety envelope \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:ch22-transfer-failure}
+\end{table}
+
+\section{Safety assurance as a research primitive}
+
+VLA가 실제 세계로 갈수록 safety assurance는 부록이 아니라 research primitive가 된다. 앞으로의 논문은 model score와 함께 safety case를 제시해야 한다.
+\begin{equation}
+  \mathrm{PaperClaim}
+  =
+  (
+  M_{benchmark},
+  M_{real},
+  M_{safe},
+  \mathcal{A}_{assurance},
+  \mathcal{L}_{logs}
+  ).
+  \label{eq:ch22-paper-claim}
+\end{equation}
+benchmark success만으로는 deployment claim을 할 수 없다. real robot protocol, safety metric, incident log, failure taxonomy가 함께 있어야 한다.
+
+formal verification은 모든 VLA behavior를 증명하는 방식으로 당장 쓰이기는 어렵다. 그러나 bounded subsystem에는 유용하다. 예를 들어 speed limit, human distance, controller saturation, collision checker, watchdog deadline은 formal 또는 semi-formal assurance가 가능하다.
+
+\section{Hardware-aware scaling}
+
+model scaling은 계속 중요하다. 그러나 robotics에서는 scaling law가 hardware와 닫힌 루프 안에서 해석되어야 한다.
+\begin{equation}
+  J
+  =
+  M_{task}
+  -
+  \lambda_1 T_{lat}
+  -
+  \lambda_2 C_{compute}
+  -
+  \lambda_3 R_{unsafe}
+  -
+  \lambda_4 R_{intervention}.
+  \label{eq:ch22-deployment-objective}
+\end{equation}
+큰 model이 $M_{task}$를 올려도 latency와 unsafe rate를 같이 올리면 deployment objective는 나빠질 수 있다.
+
+앞으로 중요한 연구 방향은 다음과 같다.
+\begin{enumerate}
+  \item large reasoning model과 small real-time policy의 분업
+  \item action head와 controller wrapper의 hardware-aware 설계
+  \item quantization 후 safety regression 측정
+  \item edge accelerator에 맞는 vision-action architecture
+  \item deadline miss를 고려한 benchmark와 reporting
+\end{enumerate}
+
+\section{Evaluation becomes infrastructure}
+
+VLA evaluation은 논문 마지막 표가 아니라 infrastructure가 되어야 한다. 같은 model을 여러 embodiment, task, controller, latency condition에서 비교하려면 standard harness가 필요하다.
+\begin{equation}
+  \mathcal{E}
+  =
+  (
+  \mathcal{T},
+  \mathcal{R},
+  \mathcal{B},
+  \mathcal{M},
+  \mathcal{P}
+  ).
+  \label{eq:ch22-eval-infra}
+\end{equation}
+$\mathcal{T}$는 task suite, $\mathcal{R}$는 robot/embodiment set, $\mathcal{B}$는 benchmark protocol, $\mathcal{M}$은 metric, $\mathcal{P}$는 reporting package이다.
+
+좋은 evaluation infrastructure는 model ranking만 만들지 않는다. 실패를 data engine으로 돌려보내고, safety case를 강화하며, adaptation target을 알려준다.
+
+\section{Research agenda}
+
+\begin{table}[h]
+  \centering
+  \caption{Real VLA 연구 agenda}
+  \begin{tabularx}{\linewidth}{p{0.25\linewidth}X X}
+    \toprule
+    Agenda & 핵심 질문 & 필요한 evidence \\
+    \midrule
+    World model & action consequence와 hidden state를 예측하는가? & counterfactual, recovery, uncertainty test \\
+    Data engine & failure가 다음 data collection으로 이어지는가? & failure taxonomy, correction data, release gate \\
+    Action interface & policy output이 controller와 맞는가? & tracking, saturation, interruption latency \\
+    Embodiment transfer & robot이 바뀌어도 task semantics가 유지되는가? & adapter ablation, cross-robot validation \\
+    Safety assurance & unsafe success를 줄였는가? & near-miss log, safety benchmark, incident report \\
+    Real-time runtime & hardware budget 안에서 동작하는가? & p95 latency, watchdog, thermal drift \\
+    Humanoid extension & balance와 manipulation이 함께 되는가? & whole-body metrics, fall/near-fall reporting \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:ch22-agenda}
+\end{table}
+
+\section{What should roboticists learn?}
+
+foundation model 시대의 roboticist는 model API를 호출하는 사람도, 고전 control만 고집하는 사람도 아니다. 앞으로 필요한 감각은 system-level integration이다.
+
+\begin{enumerate}
+  \item model이 무엇을 알고 무엇을 모르는지 evidence로 판단한다.
+  \item action representation을 controller, safety, latency와 함께 설계한다.
+  \item data collection을 model training의 전처리가 아니라 closed-loop improvement mechanism으로 본다.
+  \item benchmark score와 real deployment claim을 분리해서 읽는다.
+  \item failure log를 연구 자산으로 다룬다.
+  \item safety를 prompt policy가 아니라 robot stack의 hard constraint로 본다.
+\end{enumerate}
+
+\chapterwork
+{Future direction을 model scale, data engine, action interface, evaluation, safety assurance로 나누어 읽어라. 최신 system은 evidence tier를 함께 적어야 한다.}
+{VLA의 다음 발전이 단순히 더 큰 VLM이 아니라 더 강한 system contract여야 하는 이유는 무엇인가?}
+{향후 1년 연구계획을 하나 작성하라. 최소한 target task, action representation, data engine, evaluation protocol, safety evidence를 포함해야 한다.}
+
+\section{Closing synthesis}
+
+이 책의 출발점은 ``VLA는 더 큰 VLM이 아니다''였다. 마지막 결론도 같다. Real VLA는 vision, language, action이 결합된 model이지만, model만으로 완성되지 않는다. state estimation, dynamics, control, contact, planning, imitation learning, reinforcement learning, transformer architecture, data engine, adaptation, evaluation, real-time runtime, safety, humanoid embodiment가 함께 작동해야 한다.
+
+VLA는 기존 로봇공학을 대체하지 않는다. 오히려 기존 로봇공학이 다루던 문제를 더 넓은 task distribution과 language interface 위에서 다시 묻는다. controller는 여전히 필요하고, planning은 여전히 필요하며, dynamics와 contact는 사라지지 않는다. 달라지는 것은 이 모든 요소가 foundation model과 data loop를 중심으로 다시 연결된다는 점이다.
+
+Real VLA를 연구한다는 것은 하나의 거대 모델을 기다리는 일이 아니다. 로봇이 실제 세계에서 명령을 이해하고, 볼 것을 보고, 할 수 있는 일을 하고, 모르면 멈추고, 실패하면 배우고, 사람과 환경을 해치지 않도록 만드는 system을 설계하는 일이다. 이것이 로봇공학자의 관점에서 본 VLA의 핵심이다.
