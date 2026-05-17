@@ -1,0 +1,1010 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Real VLA Book | Reading Map</title>
+  <meta name="description" content="Real VLA 책을 어떻게 읽을지, 각 장이 어떤 시스템 책임 경계를 넘겨주는지 탐색하는 랜딩페이지">
+  <style>
+    :root {
+      --ink: #111827;
+      --muted: #5b6472;
+      --line: #d8dee8;
+      --paper: #fbfbf8;
+      --panel: #ffffff;
+      --blue: #174a7c;
+      --green: #1d6f54;
+      --amber: #9a5b12;
+      --red: #9d2f2f;
+      --violet: #6554a6;
+      --shadow: 0 18px 44px rgba(17, 24, 39, 0.12);
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+      max-width: 100%;
+    }
+
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+      max-width: 100%;
+      overflow-x: hidden;
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .shell {
+      width: min(1160px, calc(100% - 36px));
+      margin: 0 auto;
+      max-width: 100%;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      border-bottom: 1px solid rgba(216, 222, 232, 0.9);
+      background: rgba(251, 251, 248, 0.92);
+      backdrop-filter: blur(16px);
+    }
+
+    .topbar-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      min-height: 64px;
+      gap: 22px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 800;
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      border: 1px solid var(--ink);
+      display: grid;
+      place-items: center;
+      font-size: 13px;
+      font-weight: 900;
+      background: #fff;
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .nav a {
+      padding: 8px 10px;
+      border-radius: 6px;
+    }
+
+    .nav a:hover {
+      background: #eef2f6;
+      color: var(--ink);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 310px;
+      gap: 42px;
+      align-items: center;
+      padding: 54px 0 48px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .hero > * {
+      min-width: 0;
+    }
+
+    .eyebrow {
+      margin: 0 0 16px;
+      color: var(--blue);
+      font-weight: 800;
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      overflow-wrap: anywhere;
+    }
+
+    h1 {
+      margin: 0;
+      max-width: 900px;
+      font-size: clamp(42px, 6vw, 74px);
+      line-height: 0.98;
+      letter-spacing: 0;
+      overflow-wrap: break-word;
+    }
+
+    .subtitle {
+      margin: 20px 0 0;
+      max-width: 760px;
+      color: #263241;
+      font-size: 20px;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+    }
+
+    .thesis {
+      margin: 28px 0 0;
+      padding: 18px 20px;
+      border-left: 5px solid var(--blue);
+      background: #eef4f8;
+      font-size: 17px;
+      color: #1d2c3d;
+      overflow-wrap: anywhere;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 28px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 42px;
+      padding: 10px 14px;
+      border: 1px solid var(--ink);
+      border-radius: 6px;
+      background: var(--ink);
+      color: #fff;
+      font-weight: 750;
+      font-size: 14px;
+    }
+
+    .button.secondary {
+      background: #fff;
+      color: var(--ink);
+    }
+
+    .cover-wrap {
+      justify-self: end;
+      width: min(310px, 100%);
+    }
+
+    .cover {
+      width: 100%;
+      display: block;
+      border: 1px solid #cfd6e2;
+      box-shadow: var(--shadow);
+      background: white;
+    }
+
+    .cover-caption {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      text-align: center;
+    }
+
+    section {
+      padding: 54px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      gap: 34px;
+      align-items: start;
+      margin-bottom: 28px;
+    }
+
+    .section-kicker {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-weight: 800;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 42px);
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      margin: 0;
+      max-width: 780px;
+      color: #293646;
+      font-size: 18px;
+      line-height: 1.65;
+    }
+
+    .routes {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .route-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      padding: 18px;
+      min-height: 172px;
+      cursor: pointer;
+      transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+    }
+
+    .route-card:hover,
+    .route-card.active {
+      transform: translateY(-2px);
+      border-color: var(--ink);
+      box-shadow: 0 12px 28px rgba(17, 24, 39, 0.09);
+    }
+
+    .route-tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid currentColor;
+      font-size: 12px;
+      font-weight: 800;
+      color: var(--blue);
+      margin-bottom: 12px;
+    }
+
+    .route-card:nth-child(2) .route-tag { color: var(--green); }
+    .route-card:nth-child(3) .route-tag { color: var(--amber); }
+    .route-card:nth-child(4) .route-tag { color: var(--red); }
+
+    .route-card h3 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      line-height: 1.25;
+    }
+
+    .route-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .map-panel {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .flow {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .flow-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      background: #f7f9fb;
+    }
+
+    .flow-header strong {
+      font-size: 16px;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--blue);
+      display: inline-block;
+    }
+
+    .dot.green { background: var(--green); }
+    .dot.amber { background: var(--amber); }
+    .dot.red { background: var(--red); }
+    .dot.violet { background: var(--violet); }
+
+    .chapter-grid {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      padding: 18px;
+    }
+
+    .chapter-card {
+      position: relative;
+      min-height: 108px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      cursor: pointer;
+      transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+    }
+
+    .chapter-card:hover,
+    .chapter-card.selected {
+      border-color: var(--ink);
+      transform: translateY(-1px);
+      background: #fbfcfd;
+    }
+
+    .chapter-card.recommended {
+      border-color: var(--blue);
+      box-shadow: inset 0 0 0 2px rgba(23, 74, 124, 0.08);
+    }
+
+    .chapter-num {
+      width: fit-content;
+      min-width: 32px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: var(--ink);
+      color: white;
+      font-size: 12px;
+      font-weight: 800;
+      text-align: center;
+    }
+
+    .chapter-title {
+      margin: 0;
+      font-weight: 780;
+      font-size: 14px;
+      line-height: 1.25;
+    }
+
+    .chapter-role {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .part-1 .chapter-num { background: var(--blue); }
+    .part-2 .chapter-num { background: var(--green); }
+    .part-3 .chapter-num { background: var(--amber); }
+    .part-4 .chapter-num { background: var(--red); }
+    .part-5 .chapter-num { background: var(--violet); }
+
+    .detail {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      min-height: 100%;
+      padding: 20px;
+      position: sticky;
+      top: 84px;
+      align-self: start;
+    }
+
+    .detail h3 {
+      margin: 0 0 10px;
+      font-size: 24px;
+      line-height: 1.15;
+    }
+
+    .detail p {
+      margin: 0 0 14px;
+      color: #2d3948;
+    }
+
+    .detail dl {
+      display: grid;
+      gap: 12px;
+      margin: 20px 0 0;
+    }
+
+    .detail dt {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .detail dd {
+      margin: 3px 0 0;
+      color: var(--ink);
+    }
+
+    .system-svg {
+      width: 100%;
+      display: block;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .system-note {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }
+
+    .note-card {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .note-card strong {
+      display: block;
+      margin-bottom: 8px;
+    }
+
+    .note-card p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .toc-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .toc-table th,
+    .toc-table td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+
+    .toc-table th {
+      background: #f7f9fb;
+      color: #2b3746;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+    }
+
+    .toc-table tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .part-label {
+      font-weight: 850;
+      white-space: nowrap;
+    }
+
+    .footer {
+      padding: 34px 0 48px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    @media (max-width: 980px) {
+      .hero,
+      .section-head,
+      .map-panel {
+        grid-template-columns: 1fr;
+      }
+
+      .cover-wrap {
+        justify-self: start;
+        width: min(280px, 75vw);
+      }
+
+      .routes,
+      .system-note {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .chapter-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .detail {
+        position: static;
+      }
+    }
+
+    @media (max-width: 680px) {
+      body {
+        overflow-x: hidden;
+      }
+
+      .shell {
+        width: calc(100vw - 24px);
+        max-width: calc(100vw - 24px);
+      }
+
+      .topbar-inner {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 12px 0;
+      }
+
+      .nav {
+        width: 100%;
+        overflow-x: auto;
+        padding-bottom: 2px;
+      }
+
+      .hero {
+        padding-top: 36px;
+        overflow: hidden;
+      }
+
+      h1 {
+        max-width: 100%;
+        font-size: 32px;
+        line-height: 1.1;
+        word-break: break-all;
+      }
+
+      .subtitle {
+        max-width: 100%;
+        font-size: 17px;
+      }
+
+      .thesis {
+        max-width: 100%;
+      }
+
+      .hero-actions .button {
+        flex: 1 1 100%;
+        min-width: 0;
+        max-width: 100%;
+      }
+
+      .hero-actions .button:last-child {
+        flex-basis: 100%;
+      }
+
+      .routes,
+      .system-note,
+      .chapter-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .flow-header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .toc-table {
+        display: block;
+        overflow-x: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="shell topbar-inner">
+      <a class="brand" href="#top" aria-label="Real VLA landing page">
+        <span class="brand-mark">RV</span>
+        <span>Real VLA Book</span>
+      </a>
+      <nav class="nav" aria-label="Page navigation">
+        <a href="#read">읽는 법</a>
+        <a href="#map">챕터 지도</a>
+        <a href="#system">시스템 모식도</a>
+        <a href="#toc">전체 목차</a>
+        <a href="dist/real-vla-book.pdf">PDF</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <div class="shell hero">
+      <div>
+        <p class="eyebrow">A Roboticist's Field Manual for VLA Systems</p>
+        <h1>Real VLA를 모델 이름이 아니라 시스템 계약으로 읽는다.</h1>
+        <p class="subtitle">
+          이 랜딩페이지는 책 전체를 빠르게 둘러보기 위한 독서 지도다. 각 장은
+          perception, state, action, control, data, evaluation, safety가 어떤 책임을
+          넘겨받고 넘겨주는지에 따라 배치되어 있다.
+        </p>
+        <div class="thesis">
+          핵심 명제: VLA는 더 큰 VLM이 아니다. Real VLA는 language-conditioned perception과 learned action을 실제 로봇 실행 stack에 연결하는 책임 구조다.
+        </div>
+        <div class="hero-actions">
+          <a class="button" href="dist/real-vla-book.pdf">PDF 바로 열기</a>
+          <a class="button secondary" href="https://github.com/gisbi-kim/real-vla-book/raw/main/dist/real-vla-book.pdf">PDF 다운로드</a>
+          <a class="button secondary" href="#map">챕터 흐름 보기</a>
+        </div>
+      </div>
+      <aside class="cover-wrap" aria-label="Book cover">
+        <img class="cover" src="assets/real-vla-cover.png" alt="Real VLA book cover">
+        <div class="cover-caption">최신 빌드 PDF의 첫 페이지</div>
+      </aside>
+    </div>
+
+    <section id="read">
+      <div class="shell">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">How to Read</p>
+            <h2>목적에 따라 읽는 경로가 다르다.</h2>
+          </div>
+          <p class="lead">
+            이 책은 처음부터 끝까지 읽어도 되지만, 실제 연구에서는 질문이 먼저 온다.
+            아래 경로를 누르면 해당 독서 목적에 맞는 장들이 챕터 지도에서 강조된다.
+          </p>
+        </div>
+        <div class="routes" role="list" aria-label="Reading routes">
+          <button class="route-card active" data-route="full" type="button">
+            <span class="route-tag">Route A</span>
+            <h3>전체 스택을 처음부터 잡기</h3>
+            <p>VLA를 robot execution stack으로 처음 정리하는 독자를 위한 정독 경로.</p>
+          </button>
+          <button class="route-card" data-route="paper" type="button">
+            <span class="route-tag">Route B</span>
+            <h3>VLA 논문을 심사하듯 읽기</h3>
+            <p>action representation, data, evaluation, safety evidence를 빠르게 확인한다.</p>
+          </button>
+          <button class="route-card" data-route="system" type="button">
+            <span class="route-tag">Route C</span>
+            <h3>로봇 시스템을 설계하기</h3>
+            <p>state, perception, controller, latency, runtime safety의 책임 경계를 먼저 본다.</p>
+          </button>
+          <button class="route-card" data-route="course" type="button">
+            <span class="route-tag">Route D</span>
+            <h3>대학원 세미나로 운영하기</h3>
+            <p>기초, 전환, deployment evidence, synthesis를 묶어 강의 흐름을 만든다.</p>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section id="map">
+      <div class="shell">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Chapter Map</p>
+            <h2>각 장은 다음 장의 interface를 만든다.</h2>
+          </div>
+          <p class="lead">
+            아래 카드를 누르면 그 장이 책 전체에서 맡는 역할, 넘겨주는 개념, 같이 읽을 장을 볼 수 있다.
+            강조 표시는 현재 선택한 독서 경로에서 먼저 읽을 장이다.
+          </p>
+        </div>
+        <div class="map-panel">
+          <div class="flow">
+            <div class="flow-header">
+              <strong id="route-title">Route A: 전체 스택을 처음부터 잡기</strong>
+              <div class="legend" aria-label="Part legend">
+                <span><i class="dot"></i>Stack</span>
+                <span><i class="dot green"></i>Learning</span>
+                <span><i class="dot amber"></i>VLA Core</span>
+                <span><i class="dot red"></i>Evidence</span>
+                <span><i class="dot violet"></i>Beyond</span>
+              </div>
+            </div>
+            <div class="chapter-grid" id="chapter-grid" aria-live="polite"></div>
+          </div>
+          <aside class="detail" id="chapter-detail" aria-live="polite"></aside>
+        </div>
+      </div>
+    </section>
+
+    <section id="system">
+      <div class="shell">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">System Schematic</p>
+            <h2>책 전체는 숨겨진 책임을 다시 검증하는 흐름이다.</h2>
+          </div>
+          <p class="lead">
+            VLA 이전 세대는 perception, planning, control 책임을 명시적 module과 interface로 다뤘다.
+            VLA는 일부 책임을 representation 안으로 흡수하지만, 그 책임은 data, evaluation, safety evidence로 다시 확인되어야 한다.
+          </p>
+        </div>
+        <svg class="system-svg" viewBox="0 0 1160 620" role="img" aria-labelledby="schematic-title schematic-desc">
+          <title id="schematic-title">Real VLA system contract schematic</title>
+          <desc id="schematic-desc">Observation and language flow through state, perception, policy action, controller, data, evaluation and safety layers.</desc>
+          <defs>
+            <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+              <path d="M2,2 L10,6 L2,10 Z" fill="#111827"></path>
+            </marker>
+            <style>
+              .box { fill: #fff; stroke: #cfd6e2; stroke-width: 2; rx: 8; }
+              .box-blue { fill: #eef4f8; stroke: #174a7c; stroke-width: 2; rx: 8; }
+              .box-green { fill: #edf7f2; stroke: #1d6f54; stroke-width: 2; rx: 8; }
+              .box-amber { fill: #fff6e7; stroke: #9a5b12; stroke-width: 2; rx: 8; }
+              .box-red { fill: #fff0f0; stroke: #9d2f2f; stroke-width: 2; rx: 8; }
+              .box-violet { fill: #f3f1fb; stroke: #6554a6; stroke-width: 2; rx: 8; }
+              .label { font: 700 18px Inter, sans-serif; fill: #111827; }
+              .small { font: 500 13px Inter, sans-serif; fill: #4b5563; }
+              .arrow { stroke: #111827; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+              .soft { stroke: #8b96a6; stroke-width: 2; fill: none; marker-end: url(#arrow); stroke-dasharray: 7 7; }
+            </style>
+          </defs>
+
+          <rect class="box" x="34" y="54" width="210" height="94"></rect>
+          <text class="label" x="58" y="89">Observation + Language</text>
+          <text class="small" x="58" y="116">camera, proprioception, instruction</text>
+
+          <rect class="box-blue" x="304" y="38" width="210" height="126"></rect>
+          <text class="label" x="328" y="76">State / Perception</text>
+          <text class="small" x="328" y="104">belief, pose, mask, map</text>
+          <text class="small" x="328" y="126">uncertainty, calibration</text>
+
+          <rect class="box-green" x="574" y="38" width="210" height="126"></rect>
+          <text class="label" x="598" y="76">VLA Policy</text>
+          <text class="small" x="598" y="104">language-conditioned action</text>
+          <text class="small" x="598" y="126">token, vector, chunk, flow</text>
+
+          <rect class="box-amber" x="844" y="38" width="210" height="126"></rect>
+          <text class="label" x="868" y="76">Controller / Executor</text>
+          <text class="small" x="868" y="104">tracking, impedance, MPC</text>
+          <text class="small" x="868" y="126">rate, frame, saturation</text>
+
+          <rect class="box-red" x="844" y="256" width="210" height="126"></rect>
+          <text class="label" x="868" y="294">Safety / Runtime</text>
+          <text class="small" x="868" y="322">shield, watchdog, fallback</text>
+          <text class="small" x="868" y="344">unsafe success rejection</text>
+
+          <rect class="box-violet" x="574" y="256" width="210" height="126"></rect>
+          <text class="label" x="598" y="294">Evaluation Evidence</text>
+          <text class="small" x="598" y="322">success, failure, latency</text>
+          <text class="small" x="598" y="344">intervention, recovery</text>
+
+          <rect class="box" x="304" y="256" width="210" height="126"></rect>
+          <text class="label" x="328" y="294">Data Engine</text>
+          <text class="small" x="328" y="322">dataset card, metadata</text>
+          <text class="small" x="328" y="344">failure, correction, reset</text>
+
+          <rect class="box" x="304" y="470" width="750" height="86"></rect>
+          <text class="label" x="328" y="506">Core reading question</text>
+          <text class="small" x="328" y="532">무엇을 explicit interface로 남겼고, 무엇을 hidden representation에 넣었으며, 어떤 evidence로 다시 검증했는가?</text>
+
+          <path class="arrow" d="M244 101 H304"></path>
+          <path class="arrow" d="M514 101 H574"></path>
+          <path class="arrow" d="M784 101 H844"></path>
+          <path class="arrow" d="M949 164 V256"></path>
+          <path class="arrow" d="M844 319 H784"></path>
+          <path class="arrow" d="M574 319 H514"></path>
+          <path class="soft" d="M409 256 V164"></path>
+          <path class="soft" d="M679 256 V164"></path>
+          <path class="soft" d="M679 382 V470"></path>
+          <path class="soft" d="M409 382 V470"></path>
+          <text class="small" x="530" y="88">a_t</text>
+          <text class="small" x="800" y="88">u_t boundary</text>
+          <text class="small" x="800" y="308">evidence loop</text>
+        </svg>
+        <div class="system-note">
+          <div class="note-card">
+            <strong>명시적 interface</strong>
+            <p>전통 perception, planning, control은 pose, map, trajectory, controller command를 분리해서 검증했다.</p>
+          </div>
+          <div class="note-card">
+            <strong>숨겨진 representation</strong>
+            <p>VLA는 일부 책임을 network 내부로 흡수한다. 흡수는 삭제가 아니라 검증 위치의 이동이다.</p>
+          </div>
+          <div class="note-card">
+            <strong>다시 필요한 evidence</strong>
+            <p>dataset metadata, benchmark protocol, latency, intervention, safety event가 claim의 강도를 결정한다.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="toc">
+      <div class="shell">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Book Structure</p>
+            <h2>Part별로 무엇을 넘겨받는가.</h2>
+          </div>
+          <p class="lead">
+            책은 foundation model 자체보다, 그 model이 로봇 시스템의 어느 interface에 연결되는지를 따라간다.
+          </p>
+        </div>
+        <table class="toc-table">
+          <thead>
+            <tr>
+              <th>Part</th>
+              <th>Chapters</th>
+              <th>핵심 질문</th>
+              <th>다음으로 넘어가는 산출물</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="part-label">Ch0-1</td>
+              <td>기획 의도, Real VLA 정의</td>
+              <td>VLA claim을 어떤 system contract로 읽을 것인가?</td>
+              <td>model이 아니라 interface/evidence를 보는 독해법</td>
+            </tr>
+            <tr>
+              <td class="part-label">Part I</td>
+              <td>State, Perception, Control, Contact, Planning</td>
+              <td>로봇 실행 stack은 VLA 이전에 어떤 책임을 명시적으로 갖고 있었는가?</td>
+              <td>observation-state-action-control boundary</td>
+            </tr>
+            <tr>
+              <td class="part-label">Part II</td>
+              <td>Imitation, RL, Visuomotor, VLM Grounding</td>
+              <td>학습 기반 policy는 어떤 data와 representation 문제를 만든가?</td>
+              <td>language-conditioned policy를 읽는 학습 관점</td>
+            </tr>
+            <tr>
+              <td class="part-label">Part III</td>
+              <td>Planner, Robotics Transformer, Action, Data, Adaptation</td>
+              <td>Planner + skills가 어떻게 VLA policy와 action API 문제로 바뀌었는가?</td>
+              <td>action representation, data engine, fine-tuning contract</td>
+            </tr>
+            <tr>
+              <td class="part-label">Part IV</td>
+              <td>Evaluation, Hierarchy, Real-Time, Safety</td>
+              <td>성능 claim은 어떤 protocol, latency, monitor, fallback으로 검증되는가?</td>
+              <td>deployment evidence와 assurance 기준</td>
+            </tr>
+            <tr>
+              <td class="part-label">Part V</td>
+              <td>Humanoids, Synthesis, Future Directions</td>
+              <td>whole-body embodiment와 미래 VLA에서 어떤 책임 구조가 남는가?</td>
+              <td>논문 읽기 12문항과 다음 연구 문제</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="shell">
+      Real VLA Book landing page. Source and PDF are maintained at
+      <a href="https://github.com/gisbi-kim/real-vla-book">github.com/gisbi-kim/real-vla-book</a>.
+    </div>
+  </footer>
+
+  <script>
+    const chapters = [
+      { n: "0", part: 1, title: "이 책의 기획 의도", role: "Real VLA claim을 읽는 기준", gives: "K={M,A,P,U,D,E,S}, evidence tier, history timeline", next: "책 전체를 interface와 evidence로 읽는 렌즈", routes: ["full", "course"] },
+      { n: "1", part: 1, title: "Real VLA란 무엇인가", role: "VLA를 책임 구조로 정의", gives: "VLM, VLA policy, Real VLA system 구분", next: "a_t와 u_t를 분리해서 보는 출발점", routes: ["full", "paper", "system", "course"] },
+      { n: "2", part: 1, title: "State, Dynamics, and Estimation", role: "observation과 state를 분리", gives: "s_t, b_t, q_t, uncertainty", next: "perception과 control이 받을 state contract", routes: ["full", "system", "course"] },
+      { n: "3", part: 1, title: "Perception Interfaces Before VLA", role: "VLM 이전 명시적 perception 책임", gives: "depth, pose, mask, map, reconstruction, uncertainty", next: "hidden representation으로 흡수된 책임을 추적하는 기준", routes: ["full", "system", "course"] },
+      { n: "4", part: 1, title: "Control Interfaces", role: "policy action과 motor command 분리", gives: "u_t, tracking, impedance, MPC, rate", next: "action representation이 control boundary라는 문제", routes: ["full", "paper", "system", "course"] },
+      { n: "5", part: 1, title: "Contact, Force, and Manipulation", role: "접촉이 만드는 물리 제약", gives: "force, friction, grasp, slip, tactile evidence", next: "vision-language success와 physical success의 차이", routes: ["full", "system"] },
+      { n: "6", part: 1, title: "Planning, Motion Planning, and TAMP", role: "symbolic plan과 feasible motion 연결", gives: "precondition, collision, IK, task-motion feasibility", next: "LLM planner와 VLA policy의 책임 경계", routes: ["full", "system", "course"] },
+      { n: "7", part: 2, title: "Imitation Learning and Covariate Shift", role: "demonstration data의 한계", gives: "behavior cloning, recovery, intervention labels", next: "robot data engine이 왜 필요한가", routes: ["full", "course"] },
+      { n: "8", part: 2, title: "RL, Optimal Control, and Control as Inference", role: "reward와 policy optimization의 언어", gives: "objective, value, offline RL, safety 분리", next: "learned policy의 evidence를 읽는 법", routes: ["full", "course"] },
+      { n: "9", part: 2, title: "Visuomotor Policies", role: "image-to-action policy 계보", gives: "visual feature, action chunk, diffusion policy bridge", next: "VLM grounding과 VLA transition", routes: ["full", "course"] },
+      { n: "10", part: 2, title: "Transformers, VLMs, and Grounding", role: "semantic prior와 physical grounding 분리", gives: "tokenization, image-text alignment, affordance gap", next: "LLM/VLM planner의 가능성과 한계", routes: ["full", "paper", "course"] },
+      { n: "11", part: 3, title: "LLM/VLM as Robot Planner", role: "language planner를 robot feasibility로 읽기", gives: "SayCan, code policy, value map, tool interface", next: "planner+skills에서 VLA로 넘어가는 이유", routes: ["full", "paper", "course"] },
+      { n: "12", part: 3, title: "From Planner + Skills to VLA", role: "skill library와 learned action 사이 전환", gives: "skill boundary, progress monitor, handoff", next: "robotics transformer 시대의 action prediction", routes: ["full", "paper", "course"] },
+      { n: "13", part: 3, title: "Robotics Transformer Era", role: "RT 계열과 open VLA 흐름", gives: "RT-1, RT-2, PaLM-E, RoboCat, OpenVLA", next: "action representation을 중심 병목으로 보기", routes: ["full", "paper", "course"] },
+      { n: "14", part: 3, title: "Action Representation Is the Control Boundary", role: "책의 technical center", gives: "token, vector, waypoint, chunk, flow, controller interface", next: "data와 adaptation이 action contract를 어떻게 받는가", routes: ["full", "paper", "system", "course"] },
+      { n: "15", part: 3, title: "Data Engines", role: "robot data를 web data와 분리", gives: "dataset card, metadata, reset, failure, correction", next: "fine-tuning과 evaluation의 근거", routes: ["full", "paper", "system", "course"] },
+      { n: "16", part: 3, title: "Adaptation and Fine-Tuning", role: "target robot으로 옮기는 절차", gives: "normalization, action decoder, adapter, protocol", next: "성능 claim을 어떤 benchmark로 볼 것인가", routes: ["full", "paper"] },
+      { n: "17", part: 4, title: "Evaluation and Benchmarking", role: "success rate를 evidence vector로 확장", gives: "failure type, intervention, unsafe event, latency", next: "hierarchy와 runtime evidence", routes: ["full", "paper", "system", "course"] },
+      { n: "18", part: 4, title: "Hierarchical VLA and Embodied Reasoning", role: "long horizon과 progress monitor", gives: "reasoning layer, subgoal, replanning trigger", next: "real-time execution boundary", routes: ["full", "paper", "system"] },
+      { n: "19", part: 4, title: "Real-Time and Hardware-Aware VLA", role: "latency와 hardware constraint", gives: "p95/p99 latency, watchdog, fallback, edge/cloud", next: "safety assurance의 runtime 조건", routes: ["full", "system", "course"] },
+      { n: "20", part: 4, title: "Safety and Assurance", role: "prompt safety가 아닌 stack safety", gives: "semantic, geometric, dynamic, runtime, data safety", next: "whole-body embodiment로 확장", routes: ["full", "paper", "system", "course"] },
+      { n: "21", part: 5, title: "Humanoids and Whole-Body VLA", role: "arm-only VLA를 넘어서는 embodiment", gives: "balance, bimanual, WBC, humanoid data mixture", next: "책 전체의 synthesis", routes: ["full", "paper", "system"] },
+      { n: "22", part: 5, title: "What We Have Learned", role: "책 전체 복습과 논문 읽기 12문항", gives: "core propositions, paper review checklist", next: "future directions를 평가하는 현재의 기준", routes: ["full", "paper", "course"] },
+      { n: "23", part: 5, title: "Future Directions", role: "남은 연구 문제", gives: "open problems for system-contract VLA", next: "다음 연구/수업/시스템 설계", routes: ["full", "course"] }
+    ];
+
+    const routeLabels = {
+      full: "Route A: 전체 스택을 처음부터 잡기",
+      paper: "Route B: VLA 논문을 심사하듯 읽기",
+      system: "Route C: 로봇 시스템을 설계하기",
+      course: "Route D: 대학원 세미나로 운영하기"
+    };
+
+    const grid = document.getElementById("chapter-grid");
+    const detail = document.getElementById("chapter-detail");
+    const routeTitle = document.getElementById("route-title");
+    let activeRoute = "full";
+    let selected = chapters[1];
+
+    function renderGrid() {
+      grid.innerHTML = "";
+      chapters.forEach((chapter) => {
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = `chapter-card part-${chapter.part}`;
+        if (chapter.routes.includes(activeRoute)) card.classList.add("recommended");
+        if (chapter.n === selected.n) card.classList.add("selected");
+        card.innerHTML = `
+          <span class="chapter-num">${chapter.n}</span>
+          <p class="chapter-title">${chapter.title}</p>
+          <p class="chapter-role">${chapter.role}</p>
+        `;
+        card.addEventListener("click", () => {
+          selected = chapter;
+          renderGrid();
+          renderDetail();
+        });
+        grid.appendChild(card);
+      });
+    }
+
+    function renderDetail() {
+      detail.innerHTML = `
+        <div class="chapter-num">Ch ${selected.n}</div>
+        <h3>${selected.title}</h3>
+        <p>${selected.role}</p>
+        <dl>
+          <div>
+            <dt>이 장에서 정리하는 것</dt>
+            <dd>${selected.gives}</dd>
+          </div>
+          <div>
+            <dt>다음 장으로 넘기는 것</dt>
+            <dd>${selected.next}</dd>
+          </div>
+          <div>
+            <dt>추천 독서 경로</dt>
+            <dd>${selected.routes.map((route) => routeLabels[route].replace(/^Route [A-D]: /, "")).join(" · ")}</dd>
+          </div>
+        </dl>
+      `;
+    }
+
+    document.querySelectorAll(".route-card").forEach((button) => {
+      button.addEventListener("click", () => {
+        activeRoute = button.dataset.route;
+        document.querySelectorAll(".route-card").forEach((card) => card.classList.remove("active"));
+        button.classList.add("active");
+        routeTitle.textContent = routeLabels[activeRoute];
+        const first = chapters.find((chapter) => chapter.routes.includes(activeRoute));
+        if (first) selected = first;
+        renderGrid();
+        renderDetail();
+        document.getElementById("map").scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+
+    renderGrid();
+    renderDetail();
+  </script>
+</body>
+</html>

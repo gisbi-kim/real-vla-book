@@ -8,6 +8,7 @@ This repository contains a Korean technical book manuscript on Vision-Language-A
 
 ## For Readers
 
+- Landing page: [`index.html`](index.html)
 - Final PDF: [`dist/real-vla-book.pdf`](dist/real-vla-book.pdf)
 - Direct download: [`real-vla-book.pdf`](https://github.com/gisbi-kim/real-vla-book/raw/main/dist/real-vla-book.pdf)
 
@@ -16,6 +17,9 @@ This repository contains a Korean technical book manuscript on Vision-Language-A
 ```text
 dist/
   real-vla-book.pdf          # reader-facing compiled book
+
+assets/
+  real-vla-cover.png         # cover image used by the landing page
 
 manuscript/
   latex/                     # buildable LaTeX manuscript source
