@@ -484,6 +484,72 @@
       font-size: 14px;
     }
 
+    .why-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .position-box {
+      border: 1px solid var(--ink);
+      border-radius: 8px;
+      background: #fff;
+      padding: 22px;
+      box-shadow: 0 14px 34px rgba(17, 24, 39, 0.08);
+    }
+
+    .position-box h3 {
+      margin: 0 0 12px;
+      font-size: 25px;
+      line-height: 1.18;
+    }
+
+    .position-box p {
+      margin: 0 0 14px;
+      color: #283445;
+    }
+
+    .position-box p:last-child {
+      margin-bottom: 0;
+    }
+
+    .propositions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .propositions li {
+      display: grid;
+      grid-template-columns: 32px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      min-height: 74px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px;
+      color: #263241;
+      font-size: 14px;
+      line-height: 1.42;
+    }
+
+    .prop-num {
+      display: grid;
+      place-items: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: var(--ink);
+      color: #fff;
+      font-weight: 850;
+      font-size: 12px;
+    }
+
     .toc-table {
       width: 100%;
       border-collapse: collapse;
@@ -538,6 +604,7 @@
       }
 
       .routes,
+      .why-grid,
       .system-note {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
@@ -605,8 +672,13 @@
       }
 
       .routes,
+      .why-grid,
       .system-note,
       .chapter-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .propositions {
         grid-template-columns: 1fr;
       }
 
@@ -630,6 +702,7 @@
         <span>Real VLA Book</span>
       </a>
       <nav class="nav" aria-label="Page navigation">
+        <a href="#why">취지</a>
         <a href="#read">읽는 법</a>
         <a href="#map">챕터 지도</a>
         <a href="#system">시스템 모식도</a>
@@ -643,14 +716,14 @@
     <div class="shell hero">
       <div>
         <p class="eyebrow">A Roboticist's Field Manual for VLA Systems</p>
-        <h1>Real VLA를 모델 이름이 아니라 시스템 계약으로 읽는다.</h1>
+        <h1>로봇공학자의 눈으로 VLA claim을 검증한다.</h1>
         <p class="subtitle">
-          이 랜딩페이지는 책 전체를 빠르게 둘러보기 위한 독서 지도다. 각 장은
-          perception, state, action, control, data, evaluation, safety가 어떤 책임을
-          넘겨받고 넘겨주는지에 따라 배치되어 있다.
+          이 책은 VLA를 공부하는 사람에게 로봇공학이 이미 해결된 배경지식처럼
+          사라지는 순간을 경계한다. perception, state, action, control, data,
+          evaluation, safety가 어떤 책임을 갖는지 다시 꺼내어 확인한다.
         </p>
         <div class="thesis">
-          핵심 명제: VLA는 더 큰 VLM이 아니다. Real VLA는 language-conditioned perception과 learned action을 실제 로봇 실행 stack에 연결하는 책임 구조다.
+          핵심 명제: semantic success는 곧바로 robot capability가 아니다. Real VLA claim은 model output이 실제 로봇 실행, 평가, 안전으로 닫히는지를 함께 보여줘야 한다.
         </div>
         <div class="hero-actions">
           <a class="button" href="dist/real-vla-book.pdf">PDF 바로 열기</a>
@@ -663,6 +736,55 @@
         <div class="cover-caption">최신 빌드 PDF의 첫 페이지</div>
       </aside>
     </div>
+
+    <section id="why">
+      <div class="shell">
+        <div class="section-head">
+          <div>
+            <p class="section-kicker">Why This Book</p>
+            <h2>이 책은 VLA를 로봇공학적으로 읽는 책이다.</h2>
+          </div>
+          <p class="lead">
+            VLA 연구는 중요하다. 다만 image-language reasoning, benchmark score,
+            demo success만으로 실제 로봇 capability가 증명되지는 않는다. 이 책의
+            독특함은 최신 모델을 나열하는 데 있지 않고, VLA claim을
+            state estimation, perception, controller, data, evaluation, safety의
+            관점에서 다시 묻는 데 있다.
+          </p>
+        </div>
+        <div class="why-grid">
+          <div class="position-box">
+            <h3>이 책이 경계하는 것은 VLA가 아니라, robotics interface가 사라진 듯 보이는 독해다.</h3>
+            <p>
+              VLM/VLA가 물체 이름, 장면 설명, high-level instruction을 잘 처리해도
+              로봇은 여전히 pose, uncertainty, contact, controller rate, actuator
+              limit, reset, failure label, unsafe event 안에서 움직인다.
+            </p>
+            <p>
+              그래서 이 책은 “어떤 모델인가?”보다 “그 모델의 action이 어떤
+              controller contract와 safety/evaluation evidence로 실제 behavior가
+              되는가?”를 먼저 묻는다.
+            </p>
+            <p>
+              독자는 이 책을 통해 VLA 논문을 computer vision/ML 성능표가 아니라
+              robot system claim으로 읽는 기준을 얻는다.
+            </p>
+          </div>
+          <ol class="propositions" aria-label="이 책의 핵심 명제 10개">
+            <li><span class="prop-num">1</span><span>VLA는 더 큰 VLM이 아니라 robot execution stack에 연결되는 책임 구조다.</span></li>
+            <li><span class="prop-num">2</span><span>observation, state, belief를 구분하지 않으면 perception success와 robot capability가 섞인다.</span></li>
+            <li><span class="prop-num">3</span><span>policy action <em>a<sub>t</sub></em>와 controller command <em>u<sub>t</sub></em>는 다르다.</span></li>
+            <li><span class="prop-num">4</span><span>contact-rich manipulation은 geometry만으로 닫히지 않고 force, compliance, slip, recovery가 필요하다.</span></li>
+            <li><span class="prop-num">5</span><span>LLM/VLM plan은 executable plan이 아니며 feasibility, IK, collision, recovery 검증이 필요하다.</span></li>
+            <li><span class="prop-num">6</span><span>imitation learning의 covariate shift는 VLA fine-tuning에서도 핵심 failure mode다.</span></li>
+            <li><span class="prop-num">7</span><span>action representation은 formatting 문제가 아니라 control boundary 문제다.</span></li>
+            <li><span class="prop-num">8</span><span>robot data는 web data가 아니며 embodiment, controller, action schema, reset policy가 의미를 만든다.</span></li>
+            <li><span class="prop-num">9</span><span>benchmark success는 capability의 일부 증거일 뿐이며 metadata와 failure taxonomy가 필요하다.</span></li>
+            <li><span class="prop-num">10</span><span>safety는 prompt policy가 아니라 semantic, geometric, dynamic, runtime, data, human layer의 stack property다.</span></li>
+          </ol>
+        </div>
+      </div>
+    </section>
 
     <section id="read">
       <div class="shell">
