@@ -3,11 +3,13 @@
 **Real VLA: 로봇공학자의 관점에서 본 Vision-Language-Action**
 
 [![Download PDF](https://img.shields.io/badge/Download-real--vla--book.pdf-0B4F8A?style=for-the-badge&logo=adobeacrobatreader&logoColor=white)](https://github.com/gisbi-kim/real-vla-book/raw/main/dist/real-vla-book.pdf)
+[![Landing Page](https://img.shields.io/badge/Read-landing--page-111827?style=for-the-badge&logo=githubpages&logoColor=white)](https://gisbi-kim.github.io/real-vla-book/)
 
 This repository contains a Korean technical book manuscript on Vision-Language-Action systems from a roboticist's perspective. The book frames Real VLA not as a larger VLM, but as a system contract connecting language-conditioned perception, learned action, state estimation, control, data engines, evaluation, real-time execution, and safety assurance.
 
 ## For Readers
 
+- Hosted landing page: <https://gisbi-kim.github.io/real-vla-book/>
 - Landing page: [`index.html`](index.html)
 - Final PDF: [`dist/real-vla-book.pdf`](dist/real-vla-book.pdf)
 - Direct download: [`real-vla-book.pdf`](https://github.com/gisbi-kim/real-vla-book/raw/main/dist/real-vla-book.pdf)
