@@ -35,7 +35,11 @@ Real VLA는 로봇공학을 대체하는 foundation model이 아니다. Real VLA
 
 \section{VLA를 만든 계보}
 
-Real VLA는 갑자기 등장한 단일 모델 계열이 아니다. 현재의 VLA는 classical control, state estimation, visual perception, 3D reconstruction, symbolic planning, motion planning, robot learning, VLM/LLM, robot data scaling, action representation 연구가 겹치면서 만들어진 문제 설정이다. 표~\ref{tab:ch0-history-timeline}는 이 책이 어떤 역사적 흐름을 하나의 engineering contract로 다시 읽는지 요약한다.
+Real VLA는 갑자기 등장한 단일 모델 계열이 아니다. 현재의 VLA는 classical control, state estimation, visual perception, 3D reconstruction, symbolic planning, motion planning, robot learning, VLM/LLM, robot data scaling, action representation 연구가 겹치면서 만들어진 문제 설정이다.
+
+특히 perception 계보를 따로 보는 이유가 있다. VLA 이전의 robot perception은 image를 곧바로 action으로 쓰기보다, feature, depth, pose, object mask, map, uncertainty 같은 중간 표현을 명시적으로 만들고 그 위에 planning과 control을 얹었다. Deep detection, segmentation, reconstruction도 이 구조를 완전히 없앤 것이 아니라 box, mask, feature map, radiance field 같은 다른 형태의 intermediate representation을 만들었다. 최신 VLA는 이 중간 표현의 상당 부분을 VLM embedding이나 policy hidden state 안에 흡수한다. 이 흡수는 강력하지만, failure attribution, safety check, controller handoff, evaluation evidence를 불투명하게 만들 수 있다. 따라서 이 책에서 perception history는 배경지식이 아니라 Real VLA claim을 해부하기 위한 책임 경계의 역사로 읽힌다.
+
+표~\ref{tab:ch0-history-timeline}는 이 책이 어떤 역사적 흐름을 하나의 engineering contract로 다시 읽는지 요약한다.
 
 {\small
 \setlength{\tabcolsep}{1.5pt}
