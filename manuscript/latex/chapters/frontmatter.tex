@@ -10,6 +10,10 @@
 
 한 줄로 말하면, 이 책은 VLA를 ``모델 이름''이 아니라 ``로봇 시스템의 책임 구조''로 읽기 위해 만들었다.
 
+더 직접적으로 말하면, 이 책은 로봇공학자의 눈으로 VLA claim을 검증하기 위한 책이다. VLA 연구는 중요하고 앞으로 더 중요해질 것이다. 다만 image-language reasoning, benchmark score, demo success만으로 실제 robot capability가 증명되지는 않는다. Semantic success는 곧바로 robot capability가 아니다. Real VLA claim은 model output이 실제 로봇 실행, 평가, 안전으로 닫히는지를 함께 보여주어야 한다.
+
+이 책이 경계하는 것은 VLA 자체가 아니다. 이 책이 경계하는 것은 VLA를 읽는 과정에서 robotics interface가 사라진 듯 보이는 독해이다. VLM/VLA가 물체 이름, 장면 설명, high-level instruction을 잘 처리해도 로봇은 여전히 pose, uncertainty, contact, controller rate, actuator limit, reset, failure label, unsafe event 안에서 움직인다. 따라서 이 책은 ``어떤 모델인가?''보다 ``그 모델의 action이 어떤 controller contract와 safety/evaluation evidence로 실제 behavior가 되는가?''를 먼저 묻는다. 독자는 이 책을 통해 VLA 논문을 computer vision/ML 성능표가 아니라 robot system claim으로 읽는 기준을 얻어야 한다.
+
 최근 VLA 논문과 데모는 빠르게 늘고 있다. OpenVLA, RT 계열, $\pi_0$, FAST, humanoid foundation model, robot data engine, evaluation harness는 모두 중요한 흐름이다. 그러나 이 흐름을 backbone, parameter count, benchmark score 중심으로만 읽으면 로봇공학자가 실제로 물어야 할 질문이 뒤로 밀린다. 로봇은 문장을 맞히는 시스템이 아니라, 카메라와 센서로 불완전한 세계를 보고, 물체와 접촉하고, actuator limit 안에서 움직이며, 실패하면 멈추거나 복구해야 하는 물리 시스템이다.
 
 따라서 VLA에서 진짜 어려운 질문은 다음과 같다.
