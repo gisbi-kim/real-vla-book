@@ -1,0 +1,287 @@
+\chapter{Planning, Motion Planning, and TAMP}
+
+\section*{학습 목표}
+
+이 장은 Real VLA에서 planning layer가 왜 사라지지 않는지 설명한다. VLA가 action을 직접 생성하더라도 long-horizon task에서는 goal decomposition, precondition, feasibility, recovery, constraint satisfaction이 필요하다. 이 장의 목표는 classical planning을 복고적으로 소개하는 것이 아니라, VLA가 실제 로봇 시스템 안에서 planner와 어떻게 결합되는지 이해하는 것이다.
+
+\begin{enumerate}
+  \item symbolic planning, motion planning, TAMP의 문제 정의를 구분한다.
+  \item language instruction이 plan, subgoal, constraint로 바뀌는 과정을 정식화한다.
+  \item continuous feasibility가 왜 LLM/VLA planning의 병목인지 설명한다.
+  \item VLA planner, affordance model, motion planner, controller가 하나의 loop로 연결되는 구조를 정리한다.
+\end{enumerate}
+
+\section{Planning은 action sequence의 문제다}
+
+자연어 명령은 종종 하나의 문장으로 주어진다. 그러나 로봇이 실행해야 하는 것은 보통 하나의 action이 아니라 조건을 만족하는 action sequence이다. 예를 들어 ``테이블 위 컵을 식기건조대에 놓아라''라는 명령은 object grounding, grasp feasibility, collision-free transport, stable placement, release verification을 포함한다. 이 문제를 바로 continuous action vector 하나로 바꾸면 중요한 구조가 사라진다.
+
+task planning 문제는 다음 tuple로 표현할 수 있다 \cite{lavalle2006,kaelbling2011tamp}.
+\begin{equation}
+  \mathcal{P}
+  =
+  (\mathcal{S},\mathcal{A},s_0,\mathcal{G},\gamma).
+  \label{eq:planning-problem}
+\end{equation}
+여기서 $\mathcal{S}$는 symbolic state set, $\mathcal{A}$는 symbolic action set, $s_0$는 initial state, $\mathcal{G}$는 goal condition, $\gamma$는 transition function이다. 하나의 plan은 action sequence이다.
+\begin{equation}
+  \pi^{plan}
+  =
+  (a_1,a_2,\ldots,a_K),
+  \qquad
+  s_K \in \mathcal{G}.
+  \label{eq:plan-sequence}
+\end{equation}
+이때 $a_k$는 VLA policy의 continuous action $\act_t$와 구분하기 위해 symbolic action으로 읽어야 한다. 예를 들어 \texttt{pick(mug)}, \texttt{place(mug,rack)}, \texttt{open(drawer)}는 symbolic action이고, end-effector delta pose나 gripper command는 controller가 실행하는 action이다.
+
+\begin{definitionbox}{Task planning}
+Task planning은 목표를 달성하기 위한 discrete action sequence를 찾는 문제이다. 이 계층은 무엇을 어떤 순서로 해야 하는지 다루지만, 각 action이 실제 로봇의 configuration space에서 가능한지는 별도 검사가 필요하다.
+\end{definitionbox}
+
+\section{Preconditions and effects}
+
+고전 symbolic planning의 핵심은 action을 precondition과 effect로 표현하는 것이다. action $a$가 state $s$에서 실행 가능하려면 precondition이 만족되어야 한다.
+\begin{equation}
+  \mathrm{Pre}(a) \subseteq s.
+  \label{eq:precondition}
+\end{equation}
+action을 실행한 뒤의 state는 add effect와 delete effect로 갱신된다.
+\begin{equation}
+  \gamma(s,a)
+  =
+  (s \setminus \mathrm{Del}(a)) \cup \mathrm{Add}(a).
+  \label{eq:add-delete-effect}
+\end{equation}
+
+로봇 조작 예제에서 \texttt{pick(mug)}의 precondition은 다음과 같은 symbolic predicate로 구성될 수 있다.
+\begin{equation}
+  \begin{aligned}
+  \mathrm{Pre}(\texttt{pick(mug)})
+  =
+  \{&
+  \texttt{visible(mug)},\;
+  \texttt{reachable(mug)},\\
+  &
+  \texttt{graspable(mug)},\;
+  \texttt{gripper-empty}
+  \}.
+  \end{aligned}
+  \label{eq:pick-preconditions}
+\end{equation}
+
+문제는 \texttt{reachable}이나 \texttt{graspable}이 순수 symbolic predicate가 아니라는 점이다. 이것들은 robot geometry, scene geometry, grasp sampler, IK, collision checking, contact condition에 의해 결정된다. 이 지점에서 task planning과 motion planning이 결합된다.
+
+\section{Search and heuristic}
+
+Planning은 search problem으로 볼 수 있다. 각 node는 symbolic state이고, edge는 action이다. 비용이 있는 planning에서는 다음 목적을 최소화한다.
+\begin{equation}
+  \pi^{plan\star}
+  =
+  \arg\min_{\pi^{plan}}
+  \sum_{k=1}^{K} c(s_{k-1},a_k)
+  \quad
+  \text{s.t.}\quad
+  s_K\in\mathcal{G}.
+  \label{eq:planning-cost}
+\end{equation}
+A*와 같은 heuristic search는 다음 priority를 사용한다.
+\begin{equation}
+  F(n)=G(n)+H(n),
+  \label{eq:a-star}
+\end{equation}
+여기서 $G(n)$은 현재 node까지의 cost, $H(n)$은 goal까지의 추정 cost이다.
+
+LLM/VLM planner를 이 관점으로 보면, 큰 모델은 heuristic 또는 proposal generator 역할을 할 수 있다. 즉, 어떤 action sequence가 plausible한지 제안할 수 있다. 그러나 plausible plan과 executable plan은 다르다. Real VLA에서는 language model proposal이 feasibility checker, affordance model, motion planner를 통과해야 한다.
+
+\begin{warningbox}{Plausible plan은 executable plan이 아니다}
+LLM이 ``컵을 집고 선반에 놓아라''라는 plan을 생성할 수 있어도, 컵이 reachable한지, grasp가 가능한지, 선반까지 collision-free path가 있는지, 놓은 뒤 안정적인지 보장하지 않는다. 자연어 계획은 physical feasibility check를 대체하지 못한다.
+\end{warningbox}
+
+\section{Motion planning in configuration space}
+
+Motion planning은 continuous configuration space에서 충돌 없는 경로를 찾는 문제이다. 로봇 configuration을 $\conf\in\mathcal{Q}$라 하자. 장애물과 self-collision을 피하는 자유공간은
+\begin{equation}
+  \mathcal{Q}_{free}
+  =
+  \{\conf\in\mathcal{Q}\mid \mathrm{Collision}(\conf)=0\}.
+  \label{eq:q-free}
+\end{equation}
+motion planning 문제는 시작 configuration $\conf_{start}$와 목표 set $\mathcal{Q}_{goal}$ 사이의 경로를 찾는 것이다.
+\begin{equation}
+  \xi:[0,1]\rightarrow \mathcal{Q}_{free},
+  \qquad
+  \xi(0)=\conf_{start},
+  \qquad
+  \xi(1)\in\mathcal{Q}_{goal}.
+  \label{eq:motion-planning-path}
+\end{equation}
+
+VLA가 end-effector target이나 waypoint를 출력한다면, 그것은 보통 $\mathcal{Q}_{goal}$ 또는 intermediate constraint를 정의한다. 하지만 실제 path $\xi$는 collision, joint limit, velocity limit, singularity, workspace bound를 만족해야 한다.
+
+\section{Sampling-based planning}
+
+PRM이나 RRT 계열의 sampling-based planner는 continuous space를 직접 격자로 나누지 않고 sampled configuration을 이용해 graph 또는 tree를 만든다. 단순화하면 roadmap planner는 다음 graph를 만든다.
+\begin{equation}
+  \begin{aligned}
+  \mathcal{G}_{roadmap}&=(V,E),\qquad
+  V\subset\mathcal{Q}_{free},\\
+  E&=
+  \{(q_i,q_j)\mid
+  \mathrm{LocalPlan}(q_i,q_j)\subset\mathcal{Q}_{free}\}.
+  \end{aligned}
+  \label{eq:roadmap}
+\end{equation}
+
+RRT 계열은 시작 configuration에서 tree를 확장한다.
+\begin{equation}
+  q_{new}
+  =
+  \mathrm{Steer}(q_{near},q_{rand},\eta),
+  \qquad
+  q_{new}\in\mathcal{Q}_{free}.
+  \label{eq:rrt-steer}
+\end{equation}
+
+이 방법들은 high-dimensional configuration space에서 유용하지만, VLA와 결합할 때 두 가지 문제가 생긴다. 첫째, planner가 실패했을 때 그것이 VLA의 잘못인지, goal pose의 잘못인지, scene estimate의 잘못인지 구분해야 한다. 둘째, planner의 computation time이 VLA inference loop와 맞아야 한다. 따라서 planner output은 trajectory뿐 아니라 failure reason을 함께 반환해야 한다.
+
+\section{Trajectory optimization}
+
+Trajectory optimization은 경로를 변수로 두고 objective와 constraint를 최적화한다.
+\begin{equation}
+\begin{aligned}
+  \xi^\star
+  =
+  \arg\min_{\xi}
+  &\quad
+  J_{task}(\xi;\act_t)
+  +\lambda_s J_{smooth}(\xi)
+  +\lambda_c J_{collision}(\xi) \\
+  \text{s.t.}
+  &\quad
+  \xi(\tau)\in\mathcal{Q}_{free},\\
+  &\quad
+  \dot{\xi}(\tau)\in\mathcal{V},\quad
+  \ddot{\xi}(\tau)\in\mathcal{A}.
+\end{aligned}
+\label{eq:trajopt}
+\end{equation}
+
+Trajectory optimization은 VLA가 생성한 goal, cost map, affordance map, forbidden region을 objective나 constraint로 넣기 좋다. 예를 들어 ``유리컵을 건드리지 말라''는 instruction은 forbidden region $\mathcal{R}_{forbid}$로 바뀔 수 있고, collision 또는 distance constraint로 들어갈 수 있다.
+\begin{equation}
+  d(\xi(\tau),\mathcal{R}_{forbid}) \ge d_{min}
+  \quad
+  \forall \tau.
+  \label{eq:forbidden-distance}
+\end{equation}
+
+\section{Task and motion planning}
+
+TAMP는 symbolic action sequence와 continuous parameter를 함께 찾는 문제이다. symbolic action $a_k$는 grasp, placement, path, timing 같은 continuous parameter $\theta_k$를 필요로 한다.
+\begin{equation}
+  (a_{1:K}^{\star},\theta_{1:K}^{\star})
+  =
+  \arg\min_{a_{1:K},\theta_{1:K}}
+  \sum_{k=1}^{K}
+  C(a_k,\theta_k)
+  \quad
+  \text{s.t.}\quad
+  \Phi(a_{1:K},\theta_{1:K};\hat{\state}_0)=1.
+  \label{eq:tamp}
+\end{equation}
+여기서 $\Phi$는 symbolic precondition, geometric feasibility, collision checking, grasp validity, placement stability를 모두 포함하는 feasibility predicate이다.
+
+예를 들어 \texttt{pick(mug)}는 단순한 symbolic action처럼 보이지만 실제로는 grasp pose $g$, pregrasp pose $p$, approach trajectory $\xi$, gripper force $f_g$를 필요로 한다.
+\begin{equation}
+  \theta_{\texttt{pick}}
+  =
+  (g,p,\xi,f_g).
+  \label{eq:pick-continuous-params}
+\end{equation}
+따라서 TAMP는 ``무엇을 할 것인가''와 ``그것을 어떻게 물리적으로 실행할 것인가''를 동시에 다룬다.
+
+\begin{table}[ht]
+\centering
+\caption{Planning 계층별 책임}
+\label{tab:planning-layers}
+\small
+\begin{tabularx}{\textwidth}{p{30mm}X X}
+\toprule
+계층 & 입력/출력 & 대표 failure \\
+\midrule
+Task planning & symbolic state, goal $\rightarrow$ action sequence & missing precondition, wrong ordering, no recovery branch \\
+Motion planning & start/goal configuration, geometry $\rightarrow$ collision-free path & IK failure, narrow passage, collision, timeout \\
+Trajectory optimization & cost, constraints $\rightarrow$ smooth feasible trajectory & local minimum, constraint violation, solver latency \\
+TAMP & symbolic action + continuous parameter search & sampled grasp/pose infeasible, combinatorial explosion \\
+VLA/ER planning & language, image, memory $\rightarrow$ subgoal, affordance, plan proposal & plausible but infeasible plan, hallucinated object, unsafe ambiguity \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{VLA as planner, scorer, or executor}
+
+VLA와 planning의 결합 방식은 하나가 아니다. Real VLA stack에서 큰 모델은 다음 네 역할 중 하나를 맡을 수 있다.
+
+\begin{enumerate}
+  \item \textbf{Planner}: language와 scene을 보고 symbolic 또는 semi-symbolic plan을 제안한다.
+  \item \textbf{Scorer}: 여러 skill 또는 action 후보의 affordance score를 계산한다.
+  \item \textbf{Constraint generator}: forbidden region, target relation, success condition을 만든다.
+  \item \textbf{Executor}: observation과 subgoal을 받아 continuous action을 생성한다.
+\end{enumerate}
+
+이 역할들은 한 시스템 안에서 함께 존재할 수 있다.
+\begin{equation}
+  \task,\obs_t
+  \xrightarrow{\text{ER/VLM}}
+  (g_{1:K},\mathcal{C}_{1:K})
+  \xrightarrow{\text{TAMP/Motion Planner}}
+  (\xi_{1:K},r_{1:K})
+  \xrightarrow{\text{VLA/Controller}}
+  \ctrlcmd_t.
+  \label{eq:vla-planning-pipeline}
+\end{equation}
+여기서 $g_{1:K}$는 subgoal sequence, $\mathcal{C}_{1:K}$는 constraint sequence, $\xi_{1:K}$는 feasible trajectory, $r_{1:K}$는 controller reference이다.
+
+\section{Closed-loop replanning}
+
+실제 로봇 실행은 open-loop plan execution이 아니다. perception error, object motion, human intervention, contact failure, planner timeout이 발생하면 replanning이 필요하다. 하나의 receding planning loop는 다음과 같이 쓸 수 있다.
+\begin{equation}
+\begin{aligned}
+  \bel_t &= \mathrm{UpdateBelief}(\bel_{t-1},\obs_t),\\
+  p_t &= \mathrm{Plan}(\task,\bel_t,\mathcal{C}_t),\\
+  \act_t &= \policy(\obs_t,\conf_t,p_t),\\
+  \ctrlcmd_t &= \controller(\act_t,\hat{\state}_t,\mathcal{C}_t).
+\end{aligned}
+\label{eq:closed-loop-planning}
+\end{equation}
+
+이 loop에서 VLA는 plan을 매 step 다시 만들 수도 있고, plan은 느리게 갱신하고 VLA policy만 빠르게 실행할 수도 있다. 핵심은 plan, action, controller, safety가 서로 다른 rate로 동작할 수 있다는 점이다.
+
+\section{Evaluation metadata}
+
+Planning이 포함된 VLA 실험은 단순 success rate만으로 평가하면 부족하다. 최소한 다음 항목을 기록해야 한다.
+
+\begin{itemize}
+  \item plan length and number of replans
+  \item symbolic failure reason: missing object, unsatisfied precondition, no valid action
+  \item motion planning failure reason: IK failure, collision, timeout, narrow passage
+  \item trajectory optimization status: converged, infeasible, constraint violation
+  \item VLA role: planner, scorer, constraint generator, executor
+  \item recovery branch and human intervention count
+  \item time budget: ER/VLM inference, planning, motion planning, controller loop
+\end{itemize}
+
+이 기록이 없으면 ``VLA가 실패했다''라는 문장은 너무 거칠다. 실패는 semantic parsing, object grounding, symbolic precondition, grasp sampling, IK, collision checking, controller tracking, contact safety 중 어느 곳에서든 발생할 수 있다.
+
+\begin{casebox}{Case study: SayCan과 VoxPoser를 feasibility 관점에서 읽기}
+SayCan은 language likelihood와 affordance score를 결합해 executable skill을 고르려 했고, VoxPoser는 language-conditioned value map을 통해 motion optimization이 사용할 field를 만들었다 \cite{saycan2022,voxposer2023}. 두 사례 모두 핵심은 planner가 자연어 plan을 쓰는지가 아니라, semantic proposal이 feasibility check와 어떻게 만나는가이다.
+\end{casebox}
+
+\chapterwork
+{Sampling-based motion planning과 TAMP를 LLM/VLM planner 논문과 함께 읽어라 \cite{lavalle2006,kavraki1996,lavalle2001rrt,kaelbling2011tamp}.}
+{LLM이 plan text를 잘 생성해도 robot execution plan이 되지 않는 이유는 무엇인가?}
+{mug/rack/glass task를 symbolic precondition, motion feasibility, contact constraint, recovery branch로 나누어 plan schema를 작성하라.}
+
+\section{요약}
+
+Planning은 Real VLA에서 과거의 모듈이 아니라 현재의 responsibility layer이다. LLM/VLM/VLA는 plan proposal, affordance scoring, constraint generation, action execution을 강하게 만들 수 있다. 그러나 physical feasibility, collision checking, contact constraint, recovery planning은 여전히 시스템 안에 명시적으로 존재해야 한다. 강한 Real VLA는 end-to-end policy와 planner 중 하나를 선택하는 시스템이 아니라, semantic reasoning과 geometric feasibility를 closed-loop로 연결하는 시스템이다.
+
+다음 장에서는 policy를 어떻게 학습하는가로 이동한다. planning이 무엇을 해야 하는지와 어떤 경로가 가능한지를 다룬다면, imitation learning은 실제 trajectory에서 action policy를 어떻게 배우는지 다룬다.

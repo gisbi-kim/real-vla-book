@@ -1,0 +1,308 @@
+\chapter{LLM/VLM as Robot Planner}
+
+\section*{학습 목표}
+
+이 장은 VLA 이전 단계에서 LLM과 VLM이 로봇 시스템 안에서 어떤 역할을 맡았는지 정리한다. 여기서 중요한 점은 LLM/VLM planner가 곧 VLA policy라는 뜻이 아니라는 것이다. 대부분의 시스템에서 LLM은 high-level plan, skill 선택, 코드 생성, scene query, success check, human feedback 처리 같은 역할을 맡고, 실제 운동은 기존 skill, controller, motion planner, perception module이 수행한다. 따라서 이 장의 목적은 language reasoning과 physical execution 사이의 interface를 명확히 정의하는 것이다.
+
+\begin{enumerate}
+  \item plan, skill, controller의 계층 구조를 구분한다.
+  \item LLM/VLM planner가 왜 executable plan을 보장하지 못하는지 설명한다.
+  \item SayCan, Code as Policies, Inner Monologue, VoxPoser류 구조를 하나의 interface 관점으로 정식화한다.
+  \item 이 흐름이 hierarchical VLA와 embodied reasoning으로 이어지는 이유를 정리한다.
+\end{enumerate}
+
+\section{Planner로서의 LLM/VLM}
+
+로봇에게 자연어 명령 $\ell$이 주어졌다고 하자. 예를 들어 ``테이블 위의 빨간 컵을 집어서 싱크대 옆에 놓아라''라는 명령은 하나의 motor command가 아니다. 이 명령은 object detection, pose estimation, reachability check, grasp selection, collision avoidance, force control, release condition까지 포함하는 복합 task이다. LLM planner는 이런 task를 다음과 같은 plan으로 분해하려고 한다.
+\begin{equation}
+  P_t
+  =
+  (g_1,g_2,\ldots,g_K),
+  \qquad
+  g_k \in \mathcal{G}.
+  \label{eq:llm-plan-subgoals}
+\end{equation}
+여기서 $g_k$는 subgoal, symbolic action, skill call, 또는 executable code fragment가 될 수 있다. 가장 단순한 형태는 다음 mapping이다.
+\begin{equation}
+  P_t
+  =
+  M_{\theta}^{plan}(\ell,\obs_t,\mathcal{M},\mathcal{S}),
+  \label{eq:llm-planner-map}
+\end{equation}
+여기서 $\mathcal{M}$은 scene memory 또는 world model, $\mathcal{S}$는 사용 가능한 skill library이다. 중요한 것은 $P_t$가 아직 low-level robot action이 아니라는 점이다. 실제 robot command는 plan을 executor가 해석한 뒤 생성된다.
+\begin{equation}
+  \ctrlcmd_t
+  =
+  E_{\psi}(P_t,\bel_t,\conf_t,\mathcal{C}),
+  \label{eq:plan-to-control}
+\end{equation}
+여기서 $\mathcal{C}$는 controller, motion planner, safety checker의 집합이다. 이 구조는 Chapter 5의 planning과 Chapter 3의 control interface를 language model과 연결한 형태이다.
+
+이때 LLM/VLM의 장점은 semantic prior이다. LLM은 물체의 일반적 용도, task 순서, language ambiguity 처리, tool selection에서 강하다. 그러나 robot execution은 state-dependent 문제이다. 현재 컵이 집을 수 있는 자세인지, gripper가 접근 가능한지, 중간 경로가 collision-free인지, 접촉 후 힘이 안정적인지는 language prior만으로 결정되지 않는다.
+
+\section{Skill library와 interface}
+
+LLM planner가 직접 joint torque를 출력하지 않는다면, 시스템은 skill library를 필요로 한다. skill을 다음 tuple로 정의하자.
+\begin{equation}
+  s_i
+  =
+  (\mathrm{name}_i,\mathrm{pre}_i,\mathrm{post}_i,\pi_i,\Sigma_i),
+  \label{eq:skill-tuple}
+\end{equation}
+여기서 $\mathrm{name}_i$는 language로 호출 가능한 이름, $\mathrm{pre}_i$는 precondition, $\mathrm{post}_i$는 기대되는 effect, $\pi_i$는 실제 controller 또는 policy, $\Sigma_i$는 실패 조건과 안전 제약이다. LLM은 주로 $\mathrm{name}_i$와 textual description을 보고 skill을 선택하지만, 실행 가능성은 $\mathrm{pre}_i$와 $\Sigma_i$가 현재 belief $\bel_t$에서 만족되는지로 판단해야 한다.
+
+\begin{equation}
+  \mathrm{Executable}(s_i,\bel_t,\conf_t)
+  =
+  \mathbb{I}
+  \left[
+    \mathrm{pre}_i(\bel_t)=1
+    \land
+    \Sigma_i(\bel_t,\conf_t)=1
+  \right].
+  \label{eq:skill-executable}
+\end{equation}
+이 식은 단순하지만 핵심적인 분리를 보여준다. LLM이 어떤 skill을 말할 수 있다는 사실과 그 skill이 현재 로봇에게 실행 가능하다는 사실은 다르다.
+
+\begin{table}[h]
+  \centering
+  \caption{LLM/VLM planner 구조에서 module별 책임}
+  \begin{tabularx}{\linewidth}{p{0.22\linewidth}X X}
+    \toprule
+    Module & Input & Responsibility \\
+    \midrule
+    LLM planner & instruction, context, skill description & task decomposition, skill ordering, tool routing \\
+    VLM/scene module & image, text query, object list & object grounding, relation extraction, state description \\
+    Affordance/value module & belief, candidate skill & executability, success probability, reachability estimate \\
+    Skill executor & selected skill, parameters & trajectory generation, controller call, termination check \\
+    Safety monitor & robot state, constraints & stop condition, collision/force/limit violation handling \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:llm-planner-modules}
+\end{table}
+
+이 책임 분리가 없으면 LLM planner는 시스템 설계 관점에서 위험해진다. plan text는 사람이 보기에는 그럴듯할 수 있지만, 로봇에 연결되는 순간 plan은 resource allocation, motion feasibility, contact stability, failure recovery의 문제로 바뀐다.
+
+\section{SayCan: language likelihood와 affordance}
+
+SayCan류 구조의 핵심은 ``무엇을 해야 하는가''와 ``무엇을 할 수 있는가''를 곱해서 skill을 고르는 것이다. LLM은 task context에서 적절한 skill의 language likelihood를 제공한다.
+\begin{equation}
+  p_L(s_i \mid \ell, c_t)
+  =
+  P_{\theta}^{LLM}(s_i \mid \ell, c_t),
+  \label{eq:saycan-language}
+\end{equation}
+여기서 $c_t$는 task history, scene description, 사용 가능한 skill 목록이다. 별도의 affordance 또는 value function은 현재 상태에서 해당 skill이 성공할 가능성을 추정한다.
+\begin{equation}
+  p_A(s_i \mid \bel_t)
+  =
+  P_{\phi}^{aff}(success \mid s_i,\bel_t).
+  \label{eq:saycan-affordance}
+\end{equation}
+최종 선택은 보통 다음 형태로 표현할 수 있다.
+\begin{equation}
+  s_t^{\star}
+  =
+  \arg\max_{s_i \in \mathcal{S}}
+  p_L(s_i \mid \ell,c_t)
+  p_A(s_i \mid \bel_t).
+  \label{eq:saycan-score}
+\end{equation}
+
+이 정식화의 장점은 명확하다. LLM이 semantic coherence를 제공하고, robot-specific value가 physical feasibility를 보정한다. 예를 들어 ``쓰레기를 버려라''라는 명령에서 LLM은 pick, move, open bin, place 같은 순서를 제안할 수 있다. 그러나 bin이 닫혀 있는지, 로봇 손이 쓰레기를 grasp할 수 있는지, 현재 위치에서 접근 가능한지는 affordance model이 판단해야 한다.
+
+한계도 명확하다. 첫째, $p_A$가 skill 수준의 성공확률이면 skill 내부 trajectory의 세부 실패를 충분히 설명하지 못한다. 둘째, $\mathcal{S}$에 없는 행동은 생성할 수 없다. 셋째, $p_L$과 $p_A$의 곱은 calibration 문제가 있다. LLM score와 affordance score가 서로 다른 의미의 확률이면 단순 곱이 잘 calibrated decision rule이라고 보장할 수 없다.
+
+\section{Code as Policies: plan text에서 executable program으로}
+
+Code as Policies류 접근은 LLM의 출력을 자연어 plan이 아니라 program으로 만든다. 로봇 시스템은 미리 정의된 API를 제공하고, LLM은 그 API를 호출하는 code를 생성한다.
+\begin{equation}
+  c_t
+  =
+  M_{\theta}^{code}(\ell,\obs_t,\mathcal{A}_{api},d),
+  \label{eq:code-policy-generation}
+\end{equation}
+여기서 $\mathcal{A}_{api}$는 사용 가능한 robot API 목록, $d$는 example, documentation, prompt context이다. 생성된 code는 다음과 같이 실행된다.
+\begin{equation}
+  \tau_{0:T}, r
+  =
+  \mathrm{Exec}(c_t,\bel_t,\mathcal{C}),
+  \label{eq:code-policy-exec}
+\end{equation}
+여기서 $\tau_{0:T}$는 실행 trajectory, $r$은 success/failure report이다.
+
+이 구조의 장점은 compositionality이다. LLM은 loop, conditional, function call, geometric helper를 조합할 수 있다. 또한 code는 natural language plan보다 system boundary가 분명하다. 특정 함수가 어떤 argument를 받고 어떤 return을 내는지 정의할 수 있기 때문이다. 그러나 code generation은 별도의 safety problem을 만든다. 생성된 program이 API contract를 어길 수 있고, unchecked loop, invalid coordinate, unsafe motion request를 만들 수 있다.
+
+따라서 code-based planner는 최소한 다음 검증 단계를 가져야 한다.
+\begin{equation}
+  \mathrm{Accept}(c_t)
+  =
+  \mathbb{I}
+  [
+    \mathrm{TypeCheck}(c_t)
+    \land
+    \mathrm{APICheck}(c_t)
+    \land
+    \mathrm{SafetyCheck}(c_t,\bel_t)
+  ].
+  \label{eq:code-accept}
+\end{equation}
+로봇에서는 code가 syntactically valid하다는 것만으로 충분하지 않다. code가 요청하는 motion이 robot limit, obstacle, force constraint를 만족해야 한다.
+
+\begin{tcolorbox}[title={Engineering note: generated code is an interface, not authority}]
+LLM이 생성한 code는 robot authority가 아니라 proposal이다. 실행 권한은 type checker, API checker, motion feasibility checker, safety monitor를 통과한 뒤에만 부여되어야 한다. 이 분리는 실험실 demo와 실제 로봇 시스템의 가장 큰 차이 중 하나다.
+\end{tcolorbox}
+
+\section{Inner Monologue: feedback을 포함한 closed-loop planning}
+
+초기 language planner의 약점은 open-loop plan이었다. 실제 로봇은 plan을 실행하는 동안 perception이 바뀌고, object pose가 틀어지고, grasp가 실패하고, 사람의 추가 지시가 들어온다. Inner Monologue류 구조는 planner가 observation과 feedback을 계속 읽으며 plan을 수정하는 형태를 취한다.
+\begin{align}
+  P_t &= M_{\theta}^{plan}(\ell,h_t,\obs_t), \\
+  r_t &= \mathrm{Execute}(P_t,\bel_t), \\
+  h_{t+1} &= \mathrm{Update}(h_t,\obs_{t+1},r_t,f_t),
+  \label{eq:inner-monologue-loop}
+\end{align}
+여기서 $h_t$는 language-level history, $r_t$는 execution result, $f_t$는 human feedback 또는 success detector output이다.
+
+closed-loop 구조의 핵심은 planner가 실패를 text로 다시 받아들인다는 점이다. 예를 들어 ``컵을 집으려 했지만 gripper가 미끄러졌다''는 feedback은 다음 plan에서 grasp pose, approach direction, force parameter를 바꾸는 근거가 된다. 그러나 feedback이 language로 들어온다고 해서 문제가 해결되는 것은 아니다. feedback에는 latency, perception error, ambiguous diagnosis가 포함된다. 실패 원인을 잘못 해석하면 LLM은 같은 실패를 다른 말로 반복할 수 있다.
+
+따라서 closed-loop planner는 failure report를 구조화해야 한다.
+\begin{equation}
+  e_t
+  =
+  (\mathrm{stage},\mathrm{symptom},\mathrm{measured\_state},
+  \mathrm{constraint},\mathrm{confidence}).
+  \label{eq:failure-report}
+\end{equation}
+이 형식이 있으면 LLM은 단순히 ``실패했다''가 아니라 ``grasp approach stage에서 normal force가 threshold보다 낮았다'' 같은 정보를 사용할 수 있다. 이것이 Chapter 19의 safety and assurance와 연결된다.
+
+\section{VoxPoser: value map과 model-based planning}
+
+VoxPoser류 구조는 LLM/VLM을 직접 action generator로 쓰지 않고, scene에 대한 value field 또는 constraint field를 만드는 데 사용한다. 예를 들어 language instruction과 visual scene이 주어지면, system은 3D workspace 위에 goal-relevant value map을 생성한다.
+\begin{equation}
+  V_{\theta}(\bm{x})
+  =
+  F_{\theta}^{vlm}(\bm{x},\ell,\obs_t),
+  \qquad
+  \bm{x}\in\mathcal{X}.
+  \label{eq:value-map}
+\end{equation}
+그 다음 trajectory optimizer 또는 motion planner가 이 field를 사용해 trajectory를 찾는다.
+\begin{equation}
+  \tau^{\star}
+  =
+  \arg\max_{\tau \in \mathcal{T}}
+  \left[
+    \sum_{k=0}^{T} V_{\theta}(\bm{x}_k)
+    -
+    \lambda C(\tau,\bel_t,\conf_t)
+  \right].
+  \label{eq:value-map-planning}
+\end{equation}
+여기서 $C$는 collision, smoothness, joint limit, contact constraint 등 robot-specific cost이다.
+
+이 접근은 VLM의 semantic grounding과 classical planning의 feasibility checking을 분리한다. VLM은 ``어디가 중요한가''를 알려주고, planner는 ``어떻게 갈 수 있는가''를 푼다. Real VLA 관점에서 이 구조는 매우 중요하다. 왜냐하면 VLA의 action head가 모든 것을 직접 학습하지 않아도, language-conditioned spatial field와 model-based optimizer의 결합으로 강한 system을 만들 수 있음을 보여주기 때문이다.
+
+하지만 value map 방식도 한계가 있다. 첫째, value가 높다고 해서 contact-rich manipulation이 안정적이라는 뜻은 아니다. 둘째, 3D reconstruction이나 object segmentation error가 value field에 그대로 들어간다. 셋째, optimizer가 local optimum에 빠지면 language model은 그 실패를 직접 보정하지 못할 수 있다.
+
+\begin{casebox}{Case study: SayCan과 VoxPoser를 같은 rubric으로 읽기}
+SayCan은 language likelihood와 affordance score를 결합해 skill을 선택한다 \cite{saycan2022}. 따라서 핵심 interface는 $\ell,\bel_t \rightarrow s_i$이고, controller는 skill 내부에 숨는다. VoxPoser는 VLM이 3D value map 또는 constraint field를 만들고, optimizer가 trajectory를 찾는다 \cite{voxposer2023}. 따라서 핵심 interface는 $\ell,\obs_t \rightarrow V(\bm{x}) \rightarrow \tau^\star$이다.
+
+\begin{center}
+\small
+\begin{tabularx}{\linewidth}{@{}p{0.18\linewidth}X X@{}}
+\toprule
+항목 & SayCan & VoxPoser \\
+\midrule
+Model claim & language prior와 affordance의 결합 & language-conditioned spatial field 생성 \\
+Action boundary & discrete skill selection & value field에서 trajectory optimization으로 연결 \\
+Hidden assumption & skill library가 충분하고 calibrated되어야 함 & 3D scene reconstruction과 optimizer가 충분히 좋아야 함 \\
+Real VLA verdict & planner proposal과 feasibility score의 분리 사례 & semantic grounding과 model-based planning의 분리 사례 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+두 사례는 모두 LLM/VLM이 robot controller를 대체하지 않는다는 점을 보여준다. 차이는 proposal의 형식이다. 하나는 skill index를 제안하고, 다른 하나는 workspace field를 제안한다. 그래서 두 논문의 성능 비교보다 더 중요한 질문은 어떤 proposal이 어떤 verifier와 controller를 요구하는가이다.
+\end{casebox}
+
+\section{Executability gap}
+
+LLM/VLM planner의 중심 문제는 executability gap이다. semantic plan은 task intent를 잘 반영할 수 있지만, robot execution은 constraints를 만족해야 한다. 이를 다음과 같이 표현할 수 있다.
+\begin{equation}
+  \Delta_{exec}
+  =
+  \mathrm{Plausible}(P_t \mid \ell,\obs_t)
+  -
+  \mathrm{Feasible}(P_t \mid \bel_t,\conf_t,\mathcal{C}).
+  \label{eq:executability-gap}
+\end{equation}
+이 식은 엄밀한 metric이 아니라 설계 원칙을 나타내는 notation이다. 첫 항은 language/vision model이 잘하는 영역이고, 두 번째 항은 robot system이 검증해야 하는 영역이다.
+
+\begin{table}[h]
+  \centering
+  \caption{LLM/VLM planner의 failure mode}
+  \begin{tabularx}{\linewidth}{p{0.24\linewidth}X X}
+    \toprule
+    Failure mode & 원인 & 필요한 보완 \\
+    \midrule
+    Non-executable step & skill library에 없는 action을 생성 & skill schema, tool constraint, fallback planner \\
+    Wrong grounding & object 또는 relation을 잘못 연결 & VLM verification, 3D perception, uncertainty report \\
+    Feasibility miss & reachability/collision/contact 조건 무시 & motion planner, affordance model, safety checker \\
+    Open-loop drift & execution 중 scene이 바뀜 & observation feedback, replanning, success detector \\
+    Miscalibrated confidence & LLM이 plausible answer를 과신 & abstention, score calibration, human query \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:llm-planner-failures}
+\end{table}
+
+이 gap을 줄이는 방법은 LLM을 더 크게 만드는 것만이 아니다. interface를 구조화하고, robot state를 명시하고, executable skill을 제한하고, feedback을 닫고, 실패를 측정 가능한 report로 되돌려야 한다.
+
+\section{Planner+skills에서 VLA로}
+
+LLM/VLM planner 시대의 구조는 다음과 같이 요약할 수 있다.
+\begin{equation}
+  \ell,\obs_t
+  \xrightarrow{\mathrm{LLM/VLM}}
+  P_t
+  \xrightarrow{\mathrm{skill/controller}}
+  \ctrlcmd_t.
+  \label{eq:planner-skills-pipeline}
+\end{equation}
+VLA는 이 중 일부 boundary를 end-to-end representation learning으로 흡수한다.
+\begin{equation}
+  \act_t
+  =
+  \pi_{\theta}(\ell,\obs_t,\bel_t).
+  \label{eq:vla-direct-policy}
+\end{equation}
+그러나 이 식이 모든 hierarchy를 없앤다는 뜻은 아니다. 오히려 현대 VLA 시스템은 direct action head, planner, skill library, safety checker, embodied reasoning module을 다시 조합하는 방향으로 발전한다. 따라서 LLM/VLM planner의 교훈은 폐기되지 않는다. 다음 네 가지가 그대로 남는다.
+
+\begin{enumerate}
+  \item Robot action은 language plausibility가 아니라 physical feasibility로 검증되어야 한다.
+  \item Skill boundary는 data efficiency와 generalization을 동시에 결정한다.
+  \item Feedback loop 없이는 long-horizon task에서 error accumulation을 피하기 어렵다.
+  \item Safety와 assurance는 planner output 이후의 후처리가 아니라 planner interface의 일부여야 한다.
+\end{enumerate}
+
+\section{평가 관점}
+
+LLM/VLM planner를 평가할 때는 단순히 plan text가 그럴듯한지를 보면 안 된다. 최소한 다음 지표를 분리해야 한다.
+\begin{align}
+  R_{semantic} &= \frac{\#\{\mathrm{task\ intent\ preserved}\}}{\#\{\mathrm{episodes}\}}, \\
+  R_{exec} &= \frac{\#\{\mathrm{plan\ executed\ without\ interface\ violation}\}}{\#\{\mathrm{episodes}\}}, \\
+  R_{success} &= \frac{\#\{\mathrm{task\ success}\}}{\#\{\mathrm{episodes}\}}, \\
+  R_{recover} &= \frac{\#\{\mathrm{failure\ recovered}\}}{\#\{\mathrm{recoverable\ failures}\}}.
+  \label{eq:planner-eval}
+\end{align}
+이 네 지표는 서로 다르다. $R_{semantic}$이 높아도 $R_{exec}$가 낮으면 plan은 말만 맞고 실행되지 않는다. $R_{exec}$가 높아도 $R_{success}$가 낮으면 skill은 호출되지만 task objective를 달성하지 못한다. $R_{recover}$는 closed-loop planner의 핵심 지표다.
+
+\chapterwork
+{SayCan, Code as Policies, Inner Monologue, VoxPoser를 planner-output interface 기준으로 비교하라 \cite{saycan2022,codeaspolicies2022,innermonologue2022,voxposer2023}.}
+{LLM/VLM planner가 semantic plan을 잘 만들어도 executability gap이 남는 이유는 무엇인가?}
+{하나의 drawer-opening task에 대해 planner proposal, feasibility checker, skill library, feedback channel을 나누어 system diagram을 작성하라.}
+
+\section{요약}
+
+LLM/VLM as Robot Planner 흐름은 VLA 이전의 과도기적 기술이지만, Real VLA를 이해하는 데 필수적이다. 이 흐름은 language model이 robot system에 들어갈 때 어떤 interface가 필요한지 보여주었다. LLM은 task를 분해하고, VLM은 scene을 해석하고, affordance model은 실행 가능성을 평가하고, controller는 실제 운동을 만든다. 이 역할 분리가 명확할수록 system은 설명 가능하고 검증 가능하다.
+
+다음 장에서는 이 planner+skills 구조가 왜 충분하지 않았는지, 그리고 어떻게 action을 포함한 VLA policy로 넘어가게 되었는지 다룬다. 핵심 질문은 다음과 같다. skill library의 경계가 너무 강하면 generalization이 막히고, end-to-end policy로 너무 많이 넘기면 safety와 control interface가 약해진다. Real VLA는 이 둘 중 하나를 단순히 선택하는 문제가 아니라, 어느 boundary를 학습하고 어느 boundary를 시스템적으로 고정할지 결정하는 설계 문제다.

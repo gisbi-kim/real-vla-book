@@ -1,0 +1,26 @@
+# TeX build intermediates
+4_latex_book/build/*
+!4_latex_book/build/main.pdf
+
+# QA render images are reproducible and bulky
+4_latex_book/build/qa/
+
+# LaTeX temporary files outside build/
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.toc
+*.xdv
+*.synctex.gz
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+~$*
+*.tmp
+
+# Unrelated local scratch artifact in this workspace
+kaist_tenure_quarterly_questions_10y.html

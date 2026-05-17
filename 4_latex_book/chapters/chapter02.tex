@@ -1,0 +1,256 @@
+\chapter{State, Dynamics, and Estimation}
+
+\section*{학습 목표}
+Chapter 1은 Real VLA를 다섯 개의 책임 layer로 정의했다. Chapter 2는 그 중 observation과 state의 차이를 기술적으로 고정한다. 이 장의 목표는 다음과 같다.
+
+\begin{enumerate}
+  \item observation $\obs_t$와 physical state $\state_t$의 차이를 설명한다.
+  \item VLA policy, estimator, controller가 서로 다른 시간축과 정보 집합을 사용한다는 점을 명확히 한다.
+  \item partial observability, latency, calibration error가 왜 VLA failure mode가 되는지 정식화한다.
+  \item Chapter 3의 control interface와 Chapter 13의 action representation 논의를 위한 state notation을 준비한다.
+\end{enumerate}
+
+\section{로봇이 본다는 것은 상태를 안다는 뜻이 아니다}
+
+VLA 논문에서 흔히 ``image와 instruction을 입력으로 action을 출력한다''고 말한다. 이 표현은 모델 구조를 간단히 설명할 때는 유용하지만, 실제 로봇 시스템을 설명하기에는 부족하다. 카메라 image는 observation이다. 로봇이 제어해야 하는 것은 physical state이다. 두 개는 같지 않다.
+
+예를 들어 머그컵이 보인다고 해서 로봇이 머그컵의 6D pose, 표면 마찰, 내부 액체 유무, gripper와의 접촉 상태, 유리컵과의 최소 거리, 카메라 timestamp와 controller timestamp의 오차를 모두 알고 있다는 뜻은 아니다. VLM이 장면을 잘 설명해도 그 설명은 상태 추정을 대체하지 않는다.
+
+\begin{definitionbox}{Observation과 state}
+Observation $\obs_t$는 센서가 시점 $t$에서 제공한 측정값이다. State $\state_t$는 로봇과 환경의 물리 상태이다. 대부분의 실제 로봇 문제에서 $\state_t$는 직접 관측되지 않으며, 시스템은 estimate $\hat{\state}_t$ 또는 belief $\bel_t$를 사용한다.
+\end{definitionbox}
+
+Real VLA에서 이 구분이 중요한 이유는 단순하다. VLA policy는 주로 observation-conditioned policy로 학습되지만, controller와 safety layer는 state-dependent constraint를 요구한다. 즉 policy가 보는 것과 controller가 필요로 하는 것이 다르다.
+
+\section{State-space formulation}
+
+가장 기본적인 로봇 시스템 모델은 다음 state-space form으로 쓸 수 있다 \cite{kalman1960,thrun2005}.
+
+\begin{align}
+  \state_{t+1} &= f(\state_t, \ctrlcmd_t, \bm{w}_t), \label{eq:state-dynamics}\\
+  \obs_t &= h(\state_t, \bm{v}_t). \label{eq:observation-model}
+\end{align}
+
+여기서 $f$는 dynamics, $h$는 observation model, $\bm{w}_t$는 process noise, $\bm{v}_t$는 measurement noise이다. VLA policy가 직접 사용하는 입력은 보통 $\obs_t$ 또는 observation history $\obs_{\leq t}$이다. 그러나 실제 dynamics는 $\state_t$와 control command $\ctrlcmd_t$에 의해 전개된다.
+
+Manipulator의 경우 state는 다음처럼 구성될 수 있다.
+\begin{equation}
+  \state_t =
+  \left[
+  \conf_t^\top,
+  \dot{\conf}_t^\top,
+  \bm{x}_{ee,t}^\top,
+  \bm{x}_{obj,t}^\top,
+  \bm{c}_t^\top
+  \right]^\top ,
+  \label{eq:manipulator-state}
+\end{equation}
+여기서 $\conf_t$는 joint configuration, $\dot{\conf}_t$는 joint velocity, $\bm{x}_{ee,t}$는 end-effector pose, $\bm{x}_{obj,t}$는 object pose, $\bm{c}_t$는 contact-related variable이다. 모든 항이 항상 직접 관측되는 것은 아니다.
+
+VLA policy는 이 전체 state 대신 다음과 같은 입력을 받을 수 있다.
+\begin{equation}
+  \act_t = \policy(\bm{I}_t, \bm{p}_t, \task, m_t),
+  \label{eq:image-policy}
+\end{equation}
+여기서 $\bm{I}_t$는 image observation, $\bm{p}_t$는 proprioception, $\task$는 language instruction, $m_t$는 memory이다. 이 식은 \cref{eq:state-dynamics}와 \cref{eq:observation-model}을 제거하지 않는다. 단지 policy가 사용하는 정보 집합을 나타낼 뿐이다.
+
+\section{Partial observability}
+
+로봇 조작은 대부분 partially observable problem이다. 관측되지 않는 변수는 많다.
+
+\begin{itemize}
+  \item 물체의 정확한 6D pose와 covariance
+  \item 접촉 여부와 접촉 force
+  \item gripper slip
+  \item 가려진 obstacle
+  \item 표면 마찰과 object compliance
+  \item actuator delay와 backlash
+  \item 사람의 의도 또는 workspace 침입 가능성
+\end{itemize}
+
+따라서 Real VLA 시스템은 observation을 곧바로 state로 취급하면 안 된다. 더 일반적으로는 belief state를 사용한다.
+
+\begin{equation}
+  \bel_t = p(\state_t \mid \obs_{1:t}, \ctrlcmd_{1:t-1}, \task).
+  \label{eq:belief-definition}
+\end{equation}
+
+Belief update는 다음과 같은 recursive form으로 쓸 수 있다.
+
+\begin{align}
+  \bar{\bel}_t(\state_t) &=
+  \int p(\state_t \mid \state_{t-1}, \ctrlcmd_{t-1})
+  \bel_{t-1}(\state_{t-1})\,d\state_{t-1}, \label{eq:belief-predict}\\
+  \bel_t(\state_t) &=
+  \eta\,p(\obs_t \mid \state_t)\bar{\bel}_t(\state_t). \label{eq:belief-correct}
+\end{align}
+
+여기서 \cref{eq:belief-predict}는 prediction step이고, \cref{eq:belief-correct}는 correction step이다. EKF, UKF, particle filter, visual-inertial odometry, learned state estimator는 이 구조의 다른 구현으로 볼 수 있다.
+
+\section{VLA policy가 belief를 사용하는 방식}
+
+VLA policy가 명시적으로 $\bel_t$를 입력으로 받지 않더라도, 시스템 수준에서는 belief가 존재한다. 예를 들어 다음 세 가지 구현이 가능하다.
+
+\begin{enumerate}
+  \item \textbf{Implicit belief}: policy가 image history와 proprioception history를 직접 받아 내부 hidden state로 불확실성을 흡수한다.
+  \item \textbf{Explicit estimator}: 별도 state estimator가 $\hat{\state}_t$ 또는 covariance $\Sigma_t$를 계산하고, policy 또는 controller가 이를 사용한다.
+  \item \textbf{Hybrid interface}: VLA policy는 image와 language를 사용하고, controller/safety layer는 estimator가 만든 geometric state와 uncertainty를 사용한다.
+\end{enumerate}
+
+Real VLA 책에서 중요한 것은 어떤 방식이 항상 옳다는 결론이 아니다. 중요한 것은 interface를 명시하는 것이다. Policy가 uncertainty를 직접 다루는가? Controller가 별도 state estimate를 받는가? Safety layer가 covariance를 볼 수 있는가? Evaluation log에 estimator failure가 기록되는가?
+
+\begin{table}[ht]
+\centering
+\caption{State information이 stack에서 사용되는 위치}
+\label{tab:state-stack}
+\small
+\begin{tabularx}{\textwidth}{p{30mm}X X}
+\toprule
+Layer & 필요한 state 정보 & state error가 만드는 failure \\
+\midrule
+Embodied reasoning & object identity, relation, approximate pose & 잘못된 object reference 또는 infeasible subgoal \\
+VLA policy & image, proprioception, short history, estimated target & action drift, wrong grasp, layout shift failure \\
+Motion/control & joint state, end-effector pose, velocity, constraint & tracking error, collision, unstable motion \\
+Safety/assurance & forbidden region, distance, force, velocity, uncertainty & late stop, unsafe recovery, false accept \\
+Data/evaluation & logged state, timestamp, intervention, failure label & benchmark artifact, hidden estimator failure \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Dynamics and controller-relevant state}
+
+Controller가 필요로 하는 state는 policy가 보는 observation보다 더 엄격하다. Manipulator dynamics는 일반적으로 다음과 같이 쓸 수 있다.
+
+\begin{equation}
+  \bm{M}(\conf)\ddot{\conf}
+  + \bm{C}(\conf,\dot{\conf})\dot{\conf}
+  + \bm{g}(\conf)
+  + \bm{\tau}_{contact}
+  = \bm{\tau}.
+  \label{eq:manipulator-dynamics}
+\end{equation}
+
+여기서 $\bm{M}$은 inertia matrix, $\bm{C}$는 Coriolis/centrifugal term, $\bm{g}$는 gravity, $\bm{\tau}_{contact}$는 contact force가 joint torque로 반영된 항, $\bm{\tau}$는 actuator torque이다.
+
+VLA policy가 waypoint나 delta pose를 출력하더라도, 실제 robot은 \cref{eq:manipulator-dynamics}의 제약 아래 움직인다. 따라서 controller는 적어도 다음 정보를 필요로 한다.
+
+\begin{itemize}
+  \item 현재 joint configuration $\conf_t$와 velocity $\dot{\conf}_t$
+  \item end-effector pose와 Jacobian
+  \item obstacle 또는 workspace constraint
+  \item velocity, acceleration, torque limit
+  \item contact state 또는 force estimate
+\end{itemize}
+
+이 정보가 잘못되면 VLA policy가 semantic하게 맞는 action을 내도 물리 실행은 실패할 수 있다.
+
+\section{Latency and time alignment}
+
+VLA 시스템에서 time index는 자주 무시되지만, 실제 deployment에서는 핵심 변수이다. Camera frame, proprioception, VLA inference, safety monitor, controller loop는 서로 다른 rate로 동작한다.
+
+\begin{table}[ht]
+\centering
+\caption{Real VLA stack의 대표 time scale}
+\label{tab:timescale}
+\small
+\begin{tabularx}{\textwidth}{p{34mm}X X}
+\toprule
+Component & 대표 rate 또는 지연 & 영향 \\
+\midrule
+Camera / vision encoder & 10--60 Hz, frame latency 존재 & object pose와 실제 pose 사이 time skew 발생 \\
+VLA inference & model 크기에 따라 수 Hz 이하일 수 있음 & high-rate correction이 어려움 \\
+Controller loop & 100 Hz--1 kHz & fast stabilization과 contact response 담당 \\
+Safety monitor & event에 따라 high-rate 필요 & 늦으면 stop이 의미 없어짐 \\
+Data logger & multi-rate synchronization 필요 & failure analysis와 reproducibility에 영향 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+측정 시각과 실행 시각이 다르면 policy는 오래된 observation에 대해 action을 낼 수 있다. 이를 단순하게 쓰면
+\begin{equation}
+  \act_t = \policy(\obs_{t-\delta_o}, \conf_{t-\delta_q}, \task),
+  \label{eq:delayed-policy}
+\end{equation}
+이다. 여기서 $\delta_o$와 $\delta_q$는 observation과 proprioception의 effective delay이다. Controller가 실제로 받는 명령은 다시 inference delay와 communication delay를 거친다.
+\begin{equation}
+  \ctrlcmd_t = \controller(\act_{t-\delta_\pi}, \hat{\state}_{t-\delta_s}, \mathcal{C}_{t-\delta_c}).
+  \label{eq:delayed-control}
+\end{equation}
+
+이 식은 추상적이지만 중요한 engineering message를 준다. VLA가 ``현재 장면''을 보고 있다고 말하려면 timestamp alignment를 증명해야 한다. 특히 contact-rich manipulation과 human-proximate robot에서는 delay가 safety failure로 직접 이어질 수 있다.
+
+\section{Calibration and coordinate frames}
+
+State estimation은 센서 값을 추정 state로 바꾸는 문제일 뿐 아니라 coordinate frame을 맞추는 문제이기도 하다. VLA action이 end-effector delta인지, camera frame waypoint인지, world frame pose인지에 따라 controller interpretation이 달라진다.
+
+대표적으로 camera frame의 point $\bm{x}^{C}$를 robot base frame으로 바꾸려면
+\begin{equation}
+  \bm{x}^{B} = \bm{T}_{BC}\bm{x}^{C}
+  \label{eq:frame-transform}
+\end{equation}
+와 같은 extrinsic transform이 필요하다. 여기서 $\bm{T}_{BC}\in SE(3)$는 camera-to-base transform이다. Calibration error가 있으면 policy가 맞는 object를 선택해도 controller는 잘못된 위치로 움직인다.
+
+Frame mismatch는 VLA action representation과 직접 연결된다.
+
+\begin{itemize}
+  \item Action token은 frame 정보를 token vocabulary에 암묵적으로 숨길 수 있다.
+  \item Continuous delta는 scale과 frame convention을 명시해야 한다.
+  \item Waypoint는 world frame, base frame, camera frame 중 어느 frame인지 명확해야 한다.
+  \item Whole-body action은 base motion과 arm motion의 frame coupling을 다룬다.
+\end{itemize}
+
+따라서 Chapter 13의 action representation 비교는 Chapter 2의 state/frame notation 위에 세워진다.
+
+\section{State uncertainty and safety}
+
+Safety layer는 단순히 estimated state만 보면 부족하다. Uncertainty도 봐야 한다. 물체 위치 추정치가 같아도 covariance가 큰 경우와 작은 경우는 다른 safety decision을 요구한다.
+
+장애물과 end-effector 사이 signed distance를 $d(\hat{\state}_t)$라 쓰자. Uncertainty를 반영한 conservative safety margin은 다음처럼 둘 수 있다.
+\begin{equation}
+  d(\hat{\state}_t) - \lambda \sqrt{\bm{J}_d \Sigma_t \bm{J}_d^\top} \ge d_{\min},
+  \label{eq:uncertainty-safety}
+\end{equation}
+여기서 $\Sigma_t$는 state covariance, $\bm{J}_d$는 distance function의 local Jacobian, $\lambda$는 confidence margin, $d_{\min}$은 최소 안전 거리이다.
+
+이 식은 safety가 단순 rule이 아니라 state estimation과 연결된다는 점을 보여준다. VLA policy가 semantic하게 ``glass를 피하라''를 이해해도, glass pose uncertainty가 크면 안전한 motion을 계산할 수 없다.
+
+\section{Estimation failure modes}
+
+Real VLA에서 estimation failure는 model failure처럼 보일 수 있다. 그러나 원인을 분리해야 한다.
+
+\begin{table}[ht]
+\centering
+\caption{Estimation-related failure mode}
+\label{tab:estimation-failure}
+\small
+\begin{tabularx}{\textwidth}{p{32mm}X X}
+\toprule
+Failure mode & 증상 & 확인할 log \\
+\midrule
+Object pose error & grasp가 물체 옆을 지나감 & pose estimate, image timestamp, calibration \\
+State latency & moving object를 늦게 따라감 & sensor/control timestamp, inference latency \\
+Frame mismatch & 일정 방향으로 systematic offset 발생 & camera-base extrinsic, action frame convention \\
+Contact unobservability & grasp 후 slip을 감지하지 못함 & tactile/force sensor, gripper current, contact label \\
+Hidden intervention & success처럼 보이나 사람이 중간에 수정 & intervention log, reset policy, video audit \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+이 표는 Chapter 16의 evaluation protocol과 연결된다. Benchmark가 final success만 기록하면 estimation failure가 policy success 또는 policy failure로 잘못 분류될 수 있다.
+
+\begin{casebox}{Case study: VLA failure처럼 보이는 calibration failure}
+카메라 extrinsic이 몇 cm 어긋나면 VLA는 target object를 맞게 찾고도 gripper가 항상 물체 옆을 지나갈 수 있다. 이 실패는 language grounding 실패도, action head 실패도 아니다. Real VLA report는 camera-base calibration, timestamp, frame convention, pose covariance를 함께 기록해야 한다.
+\end{casebox}
+
+\chapterwork
+{Kalman filtering과 Probabilistic Robotics의 belief-state 관점을 읽고, VLA observation pipeline이 어떤 state estimate를 암묵적으로 요구하는지 확인하라 \cite{kalman1960,thrun2005}.}
+{image-conditioned policy가 있다고 해서 state estimation 문제가 사라지지 않는 이유는 무엇인가?}
+{mug/rack/glass task에서 $\obs_t$, $\hat{\state}_t$, $\bel_t$, calibration metadata, safety constraint를 분리한 state record를 설계하라.}
+
+\section{Roboticist's Takeaway}
+
+\begin{definitionbox}{Chapter 2 Takeaway}
+VLA가 observation을 입력으로 받는다는 사실은 state estimation 문제가 사라졌다는 뜻이 아니다. Real VLA system은 $\obs_t$, $\hat{\state}_t$, $\bel_t$, $\act_t$, $\ctrlcmd_t$가 어떤 시간축과 frame에서 연결되는지 명시해야 한다. 이 interface가 불명확하면 policy, controller, safety, evaluation failure를 구분할 수 없다.
+\end{definitionbox}
+
+다음 장은 이 상태 추정과 시간 정렬 위에서 VLA output이 어떤 controller interface를 통과해야 하는지 다룬다.

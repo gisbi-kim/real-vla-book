@@ -1,0 +1,44 @@
+\chapter*{Instructor and Editorial Note}
+\addcontentsline{toc}{chapter}{Instructor and Editorial Note}
+\markboth{Instructor and Editorial Note}{}
+
+\section*{강의 운영과 원고 검토를 위한 기준}
+
+이 부록은 독자가 본문을 읽는 데 필요한 필수 장은 아니다. 강의 담당자, reading group 운영자, 원고 검토자가 이 책을 수업 또는 출판 원고로 사용할 때 확인해야 할 기준을 정리한다.
+
+편집자나 강의 담당자가 이 원고를 검토할 때 가장 먼저 보아야 할 것은 주제의 최신성보다 구조의 검증 가능성이다. 최신 모델 이름은 빠르게 바뀌지만, 실제 로봇 시스템에서 남는 질문은 더 오래 간다. 이 원고가 책으로 성립하려면 각 장은 단순한 배경 설명이 아니라 다음 네 가지 산출물을 남겨야 한다.
+
+\begin{definitionbox}{각 장의 최소 산출물}
+각 장은 하나의 central claim, 그 claim을 지탱하는 최소 정식화, 다음 layer로 넘기는 interface, 그리고 그 claim이 실패하는 조건을 명시해야 한다. 이 네 가지 중 하나가 빠지면 장은 survey paragraph에 머물고, 강의 단위로는 충분히 닫히지 않는다.
+\end{definitionbox}
+
+\begin{table}[ht]
+\centering
+\caption{원고 검토자가 각 장에서 확인해야 할 quality gate}
+\label{tab:appendix-editorial-quality-gate}
+\small
+\begin{tabularx}{\textwidth}{p{27mm}X X}
+\toprule
+검토 항목 & 통과 기준 & 약한 원고의 신호 \\
+\midrule
+Chapter claim & 그 장이 Real VLA system claim의 어느 부분을 닫는지 한 문장으로 말할 수 있다. & 기술 소개는 많지만 왜 이 장이 필요한지 불명확하다. \\
+Formal object & 핵심 변수가 action, state, belief, constraint, data record, metric 중 어디에 속하는지 드러난다. & 용어는 많지만 수식이나 interface가 남지 않는다. \\
+System interface & 앞 장에서 받은 입력과 뒤 장으로 넘기는 출력이 구분된다. & chapter order는 있으나 dependency가 약하다. \\
+Evidence standard & benchmark, real-robot log, ablation, failure case 중 무엇이 claim을 지지하는지 말한다. & 성능 수치만 있고 실험 조건과 실패 조건이 분리되지 않는다. \\
+Teaching unit & 강의 후 학생이 풀 수 있는 engineering question이 남는다. & 읽을 수는 있지만 과제, 토론, 설계 문제로 바뀌지 않는다. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+이 기준에서 보면 이 원고의 강점은 분명하다. VLA를 model taxonomy가 아니라 system responsibility로 재정의하고, classical robotics와 embodied foundation model을 하나의 interface 문제로 묶는다. 반대로 가장 위험한 부분도 분명하다. 각 장이 논문 이름과 시스템 원리를 충분히 연결하지 못하면, 원고는 최신 분야 소개에 머물 수 있다. 따라서 강의나 개정에서는 각 장마다 대표 논문, 구현 interface, 평가 protocol, 실패 사례를 같은 구조로 정렬해야 한다.
+
+수업 관점에서는 한 장을 다음 순서로 운영하는 것이 적절하다.
+
+\begin{enumerate}
+  \item 먼저 그 장의 system claim을 제시한다.
+  \item 그 claim을 표현하는 최소 변수와 mapping을 고정한다.
+  \item 실제 robot stack에서 그 mapping이 어느 module 사이의 interface인지 확인한다.
+  \item 마지막으로 그 claim이 어떤 data, benchmark, safety log 없이는 성립하지 않는지 따진다.
+\end{enumerate}
+
+이 운영 방식은 책의 난도를 낮추기 위한 장치가 아니다. 학생이 model architecture를 외우는 데서 멈추지 않고, action이 controller command로 내려가는 순간 어떤 가정이 추가되는지, benchmark success가 real deployment claim으로 올라갈 때 어떤 evidence가 더 필요한지를 따지게 만드는 장치이다.

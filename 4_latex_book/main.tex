@@ -1,0 +1,618 @@
+\documentclass[11pt,oneside,openany]{oblivoir}
+
+\usepackage{kotex}
+\usepackage{fontspec}
+\setmainhangulfont{UnBatang}
+\setsanshangulfont{UnDotum}
+\setmainfont{TeX Gyre Termes}
+\setsansfont{TeX Gyre Heros}
+\setmonofont{DejaVu Sans Mono}
+
+\usepackage[
+  paperwidth=170mm,
+  paperheight=240mm,
+  inner=22mm,
+  outer=18mm,
+  top=22mm,
+  bottom=24mm,
+  headheight=14pt
+]{geometry}
+\AtBeginDvi{\special{papersize=170mm,240mm}}
+\AddToHook{shipout/before}{\special{papersize=170mm,240mm}}
+\AtBeginEnvironment{table}{\special{papersize=170mm,240mm}}
+\AtBeginEnvironment{figure}{\special{papersize=170mm,240mm}}
+
+\usepackage{amsmath,amssymb,mathtools,bm}
+\usepackage{booktabs,tabularx,array,multirow,longtable}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage[most]{tcolorbox}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,fit,shapes.geometric}
+\usepackage{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{caption}
+\usepackage{microtype}
+\usepackage{ragged2e}
+\setlength{\emergencystretch}{2em}
+
+\definecolor{rvlaBlue}{HTML}{1D4E89}
+\definecolor{rvlaGray}{HTML}{F2F4F7}
+\definecolor{rvlaLine}{HTML}{D0D5DD}
+\definecolor{rvlaDark}{HTML}{101828}
+\definecolor{rvlaWarn}{HTML}{8A4B08}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=rvlaBlue,
+  citecolor=rvlaBlue,
+  urlcolor=rvlaBlue,
+  pdftitle={Real VLA: A Roboticist's Perspective},
+  pdfauthor={Giseop Kim}
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\sffamily\small Real VLA}
+\renewcommand{\chaptermark}[1]{\markboth{\thechapter 장\ #1}{}}
+\fancyhead[R]{\sffamily\small \leftmark}
+\fancyfoot[C]{\sffamily\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\fancypagestyle{rvlatoc}{
+  \fancyhf{}
+  \fancyhead[R]{\sffamily\small CONTENTS\quad\thepage}
+  \renewcommand{\headrulewidth}{0.3pt}
+}
+
+\titleformat{\chapter}[display]
+  {\sffamily\bfseries\color{rvlaDark}}
+  {\Large 제\thechapter 장}
+  {0.5em}
+  {\Huge}
+\titlespacing*{\chapter}{0pt}{1.2em}{2.0em}
+\titleformat{\section}
+  {\sffamily\Large\bfseries\color{rvlaDark}}
+  {\thesection}{0.8em}{}
+\titleformat{\subsection}
+  {\sffamily\large\bfseries\color{rvlaDark}}
+  {\thesubsection}{0.8em}{}
+
+\setlist[itemize]{leftmargin=2em,itemsep=0.25em,topsep=0.4em}
+\setlist[enumerate]{leftmargin=2.2em,itemsep=0.25em,topsep=0.4em}
+\renewcommand{\arraystretch}{1.25}
+\numberwithin{section}{chapter}
+\numberwithin{subsection}{section}
+\numberwithin{equation}{chapter}
+\makeatletter
+\@addtoreset{figure}{chapter}
+\@addtoreset{table}{chapter}
+\makeatother
+\renewcommand{\thefigure}{\thechapter.\arabic{figure}}
+\renewcommand{\thetable}{\thechapter.\arabic{table}}
+\AtBeginDocument{%
+  \counterwithin{figure}{chapter}%
+  \counterwithin{table}{chapter}%
+  \renewcommand{\thefigure}{\thechapter.\arabic{figure}}%
+  \renewcommand{\thetable}{\thechapter.\arabic{table}}%
+}
+
+\renewcommand{\contentsname}{Contents}
+\renewcommand{\printtoctitle}[1]{%
+  \vspace*{1.8em}%
+  {\sffamily\bfseries\Huge\color{rvlaDark}#1\par}%
+  \vspace{1.4em}%
+  {\color{rvlaDark}\hrule height 0.35pt}%
+  \vspace{2.8em}%
+}
+\setlength{\cftpartindent}{0em}
+\setlength{\cftpartnumwidth}{2.0em}
+\setlength{\cftchapterindent}{0em}
+\setlength{\cftchapternumwidth}{2.1em}
+\setlength{\cftsectionindent}{1.7em}
+\setlength{\cftsectionnumwidth}{3.1em}
+\setlength{\cftsubsectionindent}{3.8em}
+\setlength{\cftsubsectionnumwidth}{4.2em}
+\setlength{\cftbeforepartskip}{1.15em}
+\setlength{\cftbeforechapterskip}{0.55em}
+\setlength{\cftbeforesectionskip}{0.08em}
+\renewcommand{\cftpartfont}{\normalfont\bfseries\color{rvlaBlue}}
+\renewcommand{\cftpartpagefont}{\normalfont\bfseries}
+\renewcommand{\cftchapterfont}{\normalfont\bfseries\color{rvlaBlue}}
+\renewcommand{\cftchapterpagefont}{\normalfont\bfseries}
+\renewcommand{\cftsectionfont}{\normalfont\color{rvlaBlue}}
+\renewcommand{\cftsectionpagefont}{\normalfont}
+\renewcommand{\cftsubsectionfont}{\normalfont\color{rvlaBlue}}
+\renewcommand{\cftsubsectionpagefont}{\normalfont}
+\renewcommand{\cftchapterleader}{\normalfont\cftdotfill{\cftdotsep}}
+\renewcommand{\cftsectionleader}{\normalfont\cftdotfill{\cftdotsep}}
+\renewcommand{\cftsubsectionleader}{\normalfont\cftdotfill{\cftdotsep}}
+\newcounter{rvlatocpart}
+\newcounter{rvlatocchapter}
+\makeatletter
+\renewcommand{\partnumberline}[1]{\stepcounter{rvlatocpart}\Roman{rvlatocpart}\hspace{1em}}
+\renewcommand{\chapternumberline}[1]{\stepcounter{rvlatocchapter}\arabic{rvlatocchapter}\hspace{1em}}
+\makeatother
+
+\newtcolorbox{definitionbox}[1]{
+  enhanced,
+  breakable,
+  colback=rvlaGray,
+  colframe=rvlaBlue,
+  coltitle=white,
+  colbacktitle=rvlaBlue,
+  title={#1},
+  fonttitle=\sffamily\bfseries,
+  boxrule=0.7pt,
+  arc=1.2mm,
+  left=1.1em,
+  right=1.1em,
+  top=0.8em,
+  bottom=0.8em
+}
+
+\newtcolorbox{warningbox}[1]{
+  enhanced,
+  breakable,
+  colback=orange!4,
+  colframe=rvlaWarn,
+  coltitle=white,
+  colbacktitle=rvlaWarn,
+  title={#1},
+  fonttitle=\sffamily\bfseries,
+  boxrule=0.7pt,
+  arc=1.2mm,
+  left=1.1em,
+  right=1.1em,
+  top=0.8em,
+  bottom=0.8em
+}
+
+\newtcolorbox{casebox}[1]{
+  enhanced,
+  breakable,
+  colback=white,
+  colframe=rvlaDark,
+  coltitle=white,
+  colbacktitle=rvlaDark,
+  title={#1},
+  fonttitle=\sffamily\bfseries,
+  boxrule=0.6pt,
+  arc=1.2mm,
+  left=1.0em,
+  right=1.0em,
+  top=0.75em,
+  bottom=0.75em
+}
+
+\newcommand{\chapterwork}[3]{%
+  \section{Further reading and exercises}
+  \begin{description}[leftmargin=31mm,style=nextline,itemsep=0.45em]
+    \item[Further reading] #1
+    \item[Review question] #2
+    \item[Design exercise] #3
+  \end{description}
+}
+
+\newcommand{\obs}{\bm{o}}
+\newcommand{\state}{\bm{s}}
+\newcommand{\bel}{\bm{b}}
+\newcommand{\act}{\bm{a}}
+\newcommand{\ctrlcmd}{\bm{u}}
+\newcommand{\conf}{\bm{q}}
+\newcommand{\task}{\ell}
+\newcommand{\policy}{\pi_\theta}
+\newcommand{\controller}{\kappa}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\twodigits}[1]{\ifnum#1<10 0\fi\number#1}
+\newcommand{\builddate}{\number\year-\twodigits{\month}-\twodigits{\day}}
+
+\title{\sffamily\bfseries Real VLA\\{\Large 로봇공학자의 관점에서 본 Vision-Language-Action}}
+\author{Giseop Kim}
+\date{}
+
+\begin{document}
+
+\frontmatter
+\maketitle
+\clearpage
+\thispagestyle{empty}
+\vspace*{\fill}
+{\sffamily\small
+\noindent Author: Giseop Kim\\
+\noindent Contact: gsk@dgist.ac.kr\\
+\noindent Build date: \builddate\\
+\noindent Format: 170mm $\times$ 240mm technical manuscript
+}
+\clearpage
+\input{chapters/frontmatter}
+\clearpage
+\makeatletter
+\begingroup
+\hypersetup{linkcolor=rvlaBlue}
+\pagestyle{rvlatoc}
+\setcounter{rvlatocpart}{0}
+\setcounter{rvlatocchapter}{-1}
+{\let\addcontentsline\@gobblethree\tableofcontents}
+\clearpage
+\endgroup
+\pagestyle{fancy}
+\makeatother
+
+\mainmatter
+\setcounter{chapter}{-1}
+\input{chapters/chapter00}
+\clearpage
+\part{Real VLA Stack}
+\input{chapters/chapter01}
+\clearpage
+\input{chapters/chapter02}
+\clearpage
+\input{chapters/chapter03}
+\clearpage
+\input{chapters/chapter04}
+\clearpage
+\input{chapters/chapter05}
+\clearpage
+\part{Learning Foundations}
+\input{chapters/chapter06}
+\clearpage
+\input{chapters/chapter07}
+\clearpage
+\input{chapters/chapter08}
+\clearpage
+\input{chapters/chapter09}
+\clearpage
+\part{From Planner to VLA}
+\input{chapters/chapter10}
+\clearpage
+\input{chapters/chapter11}
+\clearpage
+\input{chapters/chapter12}
+\clearpage
+\input{chapters/chapter13}
+\clearpage
+\input{chapters/chapter14}
+\clearpage
+\input{chapters/chapter15}
+\clearpage
+\part{Deployment Evidence}
+\input{chapters/chapter16}
+\clearpage
+\input{chapters/chapter17}
+\clearpage
+\input{chapters/chapter18}
+\clearpage
+\input{chapters/chapter19}
+\clearpage
+\part{Beyond Manipulation}
+\input{chapters/chapter20}
+\clearpage
+\input{chapters/chapter21}
+\clearpage
+\input{chapters/chapter22}
+\clearpage
+
+\backmatter
+\input{chapters/instructor_note}
+\clearpage
+
+\begin{thebibliography}{99}
+\bibitem{kalman1960}
+R. E. Kalman.
+\newblock A New Approach to Linear Filtering and Prediction Problems.
+\newblock Journal of Basic Engineering, 1960.
+
+\bibitem{thrun2005}
+Sebastian Thrun, Wolfram Burgard, and Dieter Fox.
+\newblock Probabilistic Robotics.
+\newblock MIT Press, 2005.
+
+\bibitem{siciliano2009}
+Bruno Siciliano, Lorenzo Sciavicco, Luigi Villani, and Giuseppe Oriolo.
+\newblock Robotics: Modelling, Planning and Control.
+\newblock Springer, 2009.
+
+\bibitem{spong2006}
+Mark W. Spong, Seth Hutchinson, and M. Vidyasagar.
+\newblock Robot Modeling and Control.
+\newblock Wiley, 2006.
+
+\bibitem{lynch2017}
+Kevin M. Lynch and Frank C. Park.
+\newblock Modern Robotics: Mechanics, Planning, and Control.
+\newblock Cambridge University Press, 2017.
+
+\bibitem{khatib1987}
+Oussama Khatib.
+\newblock A Unified Approach for Motion and Force Control of Robot Manipulators: The Operational Space Formulation.
+\newblock IEEE Journal on Robotics and Automation, 1987.
+
+\bibitem{hogan1985}
+Neville Hogan.
+\newblock Impedance Control: An Approach to Manipulation.
+\newblock ASME Journal of Dynamic Systems, Measurement, and Control, 1985.
+
+\bibitem{mayne2000}
+David Q. Mayne, James B. Rawlings, Christopher V. Rao, and Pierre O. M. Scokaert.
+\newblock Constrained Model Predictive Control: Stability and Optimality.
+\newblock Automatica, 2000.
+
+\bibitem{ames2019}
+Aaron D. Ames, Samuel Coogan, Magnus Egerstedt, Gennaro Notomista, Koushil Sreenath, and Paulo Tabuada.
+\newblock Control Barrier Functions: Theory and Applications.
+\newblock European Control Conference, 2019.
+
+\bibitem{mason2001}
+Matthew T. Mason.
+\newblock Mechanics of Robotic Manipulation.
+\newblock MIT Press, 2001.
+
+\bibitem{lavalle2006}
+Steven M. LaValle.
+\newblock Planning Algorithms.
+\newblock Cambridge University Press, 2006.
+
+\bibitem{kavraki1996}
+Lydia E. Kavraki, Petr Svestka, Jean-Claude Latombe, and Mark H. Overmars.
+\newblock Probabilistic Roadmaps for Path Planning in High-Dimensional Configuration Spaces.
+\newblock IEEE Transactions on Robotics and Automation, 1996.
+
+\bibitem{lavalle2001rrt}
+Steven M. LaValle and James J. Kuffner.
+\newblock Randomized Kinodynamic Planning.
+\newblock International Journal of Robotics Research, 2001.
+
+\bibitem{kaelbling2011tamp}
+Leslie Pack Kaelbling and Tomas Lozano-Perez.
+\newblock Hierarchical Task and Motion Planning in the Now.
+\newblock IEEE International Conference on Robotics and Automation, 2011.
+
+\bibitem{ross2011dagger}
+Stephane Ross, Geoffrey J. Gordon, and J. Andrew Bagnell.
+\newblock A Reduction of Imitation Learning and Structured Prediction to No-Regret Online Learning.
+\newblock AISTATS, 2011.
+
+\bibitem{sutton2018}
+Richard S. Sutton and Andrew G. Barto.
+\newblock Reinforcement Learning: An Introduction.
+\newblock MIT Press, second edition, 2018.
+
+\bibitem{haarnoja2018sac}
+Tuomas Haarnoja et al.
+\newblock Soft Actor-Critic: Off-Policy Maximum Entropy Deep Reinforcement Learning with a Stochastic Actor.
+\newblock ICML, 2018.
+
+\bibitem{kumar2020cql}
+Aviral Kumar, Aurick Zhou, George Tucker, and Sergey Levine.
+\newblock Conservative Q-Learning for Offline Reinforcement Learning.
+\newblock NeurIPS, 2020.
+
+\bibitem{levine2016gps}
+Sergey Levine, Chelsea Finn, Trevor Darrell, and Pieter Abbeel.
+\newblock End-to-End Training of Deep Visuomotor Policies.
+\newblock Journal of Machine Learning Research, 2016.
+
+\bibitem{ebert2018visualforesight}
+Frederik Ebert et al.
+\newblock Visual Foresight: Model-Based Deep Reinforcement Learning for Vision-Based Robotic Control.
+\newblock arXiv:1812.00568, 2018.
+
+\bibitem{florence2021transporter}
+Andy Zeng, Pete Florence, Jonathan Tompson, Stefan Welker, Jonathan Chien,
+Maria Attarian, Travis Armstrong, Ivan Krasin, Dan Duong, Ayzaan Wahid,
+Vikas Sindhwani, and Johnny Lee.
+\newblock Transporter Networks: Rearranging the Visual World for Robotic Manipulation.
+\newblock Conference on Robot Learning, 2020; PMLR, 2021. arXiv:2010.14406.
+
+\bibitem{cliport2022}
+Mohit Shridhar, Lucas Manuelli, and Dieter Fox.
+\newblock CLIPort: What and Where Pathways for Robotic Manipulation.
+\newblock Conference on Robot Learning, 2021; PMLR 164, 2022. arXiv:2109.12098.
+
+\bibitem{vaswani2017}
+Ashish Vaswani et al.
+\newblock Attention Is All You Need.
+\newblock NeurIPS, 2017.
+
+\bibitem{dosovitskiy2021vit}
+Alexey Dosovitskiy et al.
+\newblock An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale.
+\newblock ICLR, 2021.
+
+\bibitem{clip2021}
+Alec Radford et al.
+\newblock Learning Transferable Visual Models From Natural Language Supervision.
+\newblock ICML, 2021.
+
+\bibitem{flamingo2022}
+Jean-Baptiste Alayrac et al.
+\newblock Flamingo: a Visual Language Model for Few-Shot Learning.
+\newblock NeurIPS, 2022.
+
+\bibitem{blip22023}
+Junnan Li et al.
+\newblock BLIP-2: Bootstrapping Language-Image Pre-training with Frozen Image Encoders and Large Language Models.
+\newblock ICML, 2023.
+
+\bibitem{saycan2022}
+Michael Ahn et al.
+\newblock Do As I Can, Not As I Say: Grounding Language in Robotic Affordances.
+\newblock Conference on Robot Learning, 2022; PMLR 205, 2023. arXiv:2204.01691.
+
+\bibitem{codeaspolicies2022}
+Jacky Liang et al.
+\newblock Code as Policies: Language Model Programs for Embodied Control.
+\newblock arXiv:2209.07753, 2022.
+
+\bibitem{innermonologue2022}
+Wenlong Huang et al.
+\newblock Inner Monologue: Embodied Reasoning through Planning with Language Models.
+\newblock Conference on Robot Learning, 2022; PMLR 205, 2023. arXiv:2207.05608.
+
+\bibitem{voxposer2023}
+Wenlong Huang, Chen Wang, Ruohan Zhang, Yunzhu Li, Jiajun Wu, and Li Fei-Fei.
+\newblock VoxPoser: Composable 3D Value Maps for Robotic Manipulation with Language Models.
+\newblock Conference on Robot Learning, 2023; PMLR 229, 2023. arXiv:2307.05973.
+
+\bibitem{gato2022}
+Scott Reed et al.
+\newblock A Generalist Agent.
+\newblock arXiv:2205.06175, 2022.
+
+\bibitem{bcz2022}
+Eric Jang, Alex Irpan, Mohi Khansari, Daniel Kappler, Frederik Ebert,
+Corey Lynch, Sergey Levine, and Chelsea Finn.
+\newblock BC-Z: Zero-Shot Task Generalization with Robotic Imitation Learning.
+\newblock Conference on Robot Learning, 2021; PMLR 164, 2022. arXiv:2202.02005.
+
+\bibitem{rt12022}
+Anthony Brohan et al.
+\newblock RT-1: Robotics Transformer for Real-World Control at Scale.
+\newblock Robotics: Science and Systems, 2023. arXiv:2212.06817.
+
+\bibitem{palme2023}
+Danny Driess et al.
+\newblock PaLM-E: An Embodied Multimodal Language Model.
+\newblock International Conference on Machine Learning, 2023; PMLR 202. arXiv:2303.03378.
+
+\bibitem{rt22023}
+Anthony Brohan et al.
+\newblock RT-2: Vision-Language-Action Models Transfer Web Knowledge to Robotic Control.
+\newblock arXiv:2307.15818, 2023.
+
+\bibitem{robocat2023}
+Konstantinos Bousmalis et al.
+\newblock RoboCat: A Self-Improving Generalist Agent for Robotic Manipulation.
+\newblock Transactions on Machine Learning Research, 2023. arXiv:2306.11706.
+
+\bibitem{openx2023}
+Open X-Embodiment Collaboration.
+\newblock Open X-Embodiment: Robotic Learning Datasets and RT-X Models.
+\newblock arXiv:2310.08864, 2023.
+
+\bibitem{act2023}
+Tony Z. Zhao et al.
+\newblock Learning Fine-Grained Bimanual Manipulation with Low-Cost Hardware.
+\newblock arXiv:2304.13705, 2023.
+
+\bibitem{diffusionpolicy2023}
+Cheng Chi et al.
+\newblock Diffusion Policy: Visuomotor Policy Learning via Action Diffusion.
+\newblock arXiv:2303.04137, 2023.
+
+\bibitem{octo2024}
+Octo Model Team et al.
+\newblock Octo: An Open-Source Generalist Robot Policy.
+\newblock arXiv:2405.12213, 2024.
+
+\bibitem{openvla2024}
+Moo Jin Kim et al.
+\newblock OpenVLA: An Open-Source Vision-Language-Action Model.
+\newblock Conference on Robot Learning, 2024; PMLR 270:2679--2713, 2025. arXiv:2406.09246.
+
+\bibitem{pi02024}
+Kevin Black et al.
+\newblock $\pi_0$: A Vision-Language-Action Flow Model for General Robot Control.
+\newblock arXiv:2410.24164, 2024.
+
+\bibitem{fast2025}
+Karl Pertsch et al.
+\newblock FAST: Efficient Action Tokenization for Vision-Language-Action Models.
+\newblock arXiv:2501.09747, 2025.
+
+\bibitem{openvlaoft2025}
+Moo Jin Kim, Chelsea Finn, and Percy Liang.
+\newblock Fine-Tuning Vision-Language-Action Models: Optimizing Speed and Success.
+\newblock arXiv:2502.19645, 2025.
+
+\bibitem{rdt1b2024}
+Songming Liu, Lingxuan Wu, Bangguo Li, Hengkai Tan, Huayu Chen,
+Zhengyi Wang, Ke Xu, Hang Su, and Jun Zhu.
+\newblock RDT-1B: a Diffusion Foundation Model for Bimanual Manipulation.
+\newblock arXiv:2410.07864, 2024.
+
+\bibitem{grootn12025}
+NVIDIA et al.
+\newblock GR00T N1: An Open Foundation Model for Generalist Humanoid Robots.
+\newblock arXiv:2503.14734, 2025.
+
+\bibitem{pi052025}
+Physical Intelligence et al.
+\newblock $\pi_{0.5}$: a Vision-Language-Action Model with Open-World Generalization.
+\newblock arXiv:2504.16054, 2025.
+
+\bibitem{bridgedatav22023}
+Homer Walke et al.
+\newblock BridgeData V2: A Dataset for Robot Learning at Scale.
+\newblock arXiv:2308.12952, 2023.
+
+\bibitem{droid2024}
+Alexander Khazatsky et al.
+\newblock DROID: A Large-Scale In-The-Wild Robot Manipulation Dataset.
+\newblock arXiv:2403.12945, 2024.
+
+\bibitem{libero2023}
+Bo Liu et al.
+\newblock LIBERO: Benchmarking Knowledge Transfer for Lifelong Robot Learning.
+\newblock NeurIPS Datasets and Benchmarks, 2023. arXiv:2306.03310.
+
+\bibitem{calvin2022}
+Oier Mees, Lukas Hermann, Erick Rosete-Beas, and Wolfram Burgard.
+\newblock CALVIN: A Benchmark for Language-Conditioned Policy Learning for Long-Horizon Robot Manipulation Tasks.
+\newblock IEEE Robotics and Automation Letters, 2022. arXiv:2112.03227.
+
+\bibitem{hulc2022}
+Oier Mees, Lukas Hermann, and Wolfram Burgard.
+\newblock What Matters in Language Conditioned Robotic Imitation Learning over Unstructured Data.
+\newblock arXiv:2204.06252, 2022.
+
+\bibitem{maniskill22023}
+Jiayuan Gu et al.
+\newblock ManiSkill2: A Unified Benchmark for Generalizable Manipulation Skills.
+\newblock ICLR, 2023.
+
+\bibitem{simplerenv2024}
+Moo Jin Kim et al.
+\newblock SimplerEnv: Simulated Manipulation Policy Evaluation Environments for Real-World Robots.
+\newblock arXiv:2405.05941, 2024.
+
+\bibitem{vlafoundry2026}
+Jean Mercat, Sedrick Keh, Kushal Arora, Isabella Huang, Paarth Shah,
+Haruki Nishimura, Shun Iwase, and Katherine Liu.
+\newblock VLA Foundry: A Unified Framework for Training Vision-Language-Action Models.
+\newblock arXiv:2604.19728, 2026.
+
+\bibitem{robomimic2021}
+Ajay Mandlekar et al.
+\newblock What Matters in Learning from Offline Human Demonstrations for Robot Manipulation.
+\newblock Conference on Robot Learning, 2021.
+
+\bibitem{robosuite2020}
+Yuke Zhu et al.
+\newblock robosuite: A Modular Simulation Framework and Benchmark for Robot Learning.
+\newblock arXiv:2009.12293, 2020.
+
+\bibitem{shielding2018}
+Mohammed Alshiekh et al.
+\newblock Safe Reinforcement Learning via Shielding.
+\newblock AAAI, 2018.
+
+\bibitem{predictivesafetyfilter2021}
+Kim P. Wabersich, Lukas Hewing, and Melanie N. Zeilinger.
+\newblock A Predictive Safety Filter for Learning-Based Control of Constrained Nonlinear Dynamical Systems.
+\newblock Automatica, 2021.
+
+\bibitem{iso10218}
+International Organization for Standardization.
+\newblock ISO 10218: Robots and Robotic Devices -- Safety Requirements for Industrial Robots.
+\newblock ISO, 2011.
+
+\bibitem{isots15066}
+International Organization for Standardization.
+\newblock ISO/TS 15066: Robots and Robotic Devices -- Collaborative Robots.
+\newblock ISO, 2016.
+\end{thebibliography}
+
+\end{document}

@@ -1,0 +1,95 @@
+\chapter*{서문}
+\addcontentsline{toc}{chapter}{서문}
+
+이 책은 VLA를 처음 배우는 일반 AI 독자를 위한 입문서가 아니다. 이 책은 로봇공학, 제어, 로봇러닝, 컴퓨터비전 배경을 가진 대학원생과 연구자가 Vision-Language-Action system을 engineering 관점에서 해석하기 위한 field manual이다.
+
+이 책의 중심 질문은 ``어떤 모델이 가장 큰가''가 아니라 ``언어 조건부 perception과 learned action이 실제 로봇의 state estimation, controller, safety monitor, data engine, evaluation protocol과 어떤 책임 경계로 연결되는가''이다. 따라서 이 책은 model leaderboard를 만들지 않는다. 대신 VLA 논문과 시스템을 읽을 때 반드시 물어야 할 interface, evidence, failure mode를 정리한다.
+
+\section*{이 책의 독자}
+\addcontentsline{toc}{section}{이 책의 독자}
+
+이 책은 다음 독자를 기준으로 한다.
+
+\begin{itemize}
+  \item 로봇공학, 제어, motion planning, robot learning 중 적어도 하나의 배경을 가진 대학원생
+  \item VLM/LLM 기반 embodied AI 논문을 실제 robot deployment 관점에서 읽고 싶은 연구자
+  \item VLA model을 사용하거나 fine-tuning할 때 action representation, controller interface, evaluation report를 설계해야 하는 엔지니어
+\end{itemize}
+
+이 책은 classical robotics textbook, reinforcement learning textbook, transformer textbook을 대체하지 않는다. 필요한 개념은 다시 정의하지만, 목적은 개념 자체의 교과서적 완결성이 아니라 Real VLA system claim을 검토하는 기준을 만드는 것이다.
+
+\section*{이 책에서 다루지 않는 것}
+\addcontentsline{toc}{section}{이 책에서 다루지 않는 것}
+
+\begin{itemize}
+  \item VLM/LLM 일반론 전체를 설명하지 않는다.
+  \item 강화학습과 최적제어의 표준 교과서 내용을 처음부터 증명하지 않는다.
+  \item 특정 VLA 모델의 leaderboard 순위를 고정하지 않는다.
+  \item 실제 배치 evidence 없이 architecture novelty만으로 capability를 판정하지 않는다.
+\end{itemize}
+
+\section*{어떻게 읽을 것인가}
+\addcontentsline{toc}{section}{어떻게 읽을 것인가}
+
+Part I은 Real VLA가 올라갈 robot substrate를 고정한다. Part II는 imitation, RL, visuomotor policy, VLM grounding을 VLA-specific failure 관점에서 읽는다. Part III는 planner와 robotics transformer에서 action representation, data engine, adaptation으로 이어지는 현대 VLA의 중심부이다. Part IV는 evaluation, hierarchy, real-time, safety를 통해 deployment evidence를 다룬다. Part V는 humanoid, whole-book synthesis, future direction으로 범위를 넓힌다.
+
+각 장을 읽을 때는 다음 네 질문을 유지한다.
+
+\begin{enumerate}
+  \item 이 장에서 바뀌는 interface는 무엇인가?
+  \item 이 장의 주장은 어떤 변수, constraint, data record, metric으로 검증되는가?
+  \item running example인 ``머그컵을 drying rack에 올리고 유리컵은 건드리지 말라''에서 어떤 failure를 설명하는가?
+  \item 논문을 읽을 때 어떤 evidence가 없으면 claim을 약하게 봐야 하는가?
+\end{enumerate}
+
+\chapter*{Notation and Glossary}
+\addcontentsline{toc}{chapter}{Notation and Glossary}
+
+\section*{주요 notation}
+\addcontentsline{toc}{section}{주요 notation}
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{0.18\textwidth}p{0.76\textwidth}@{}}
+\toprule
+기호 & 이 책에서의 의미 \\
+\midrule
+$\obs_t$ & time $t$의 observation. RGB, depth, tactile, proprioception, language context를 포함할 수 있다. \\
+$\state_t$ & 실제 physical state. object pose, robot configuration, contact state, hidden disturbance 등을 포함한다. \\
+$\bel_t$ & state uncertainty를 포함한 belief 또는 internal estimate. \\
+$\task$ & language instruction 또는 task specification. \\
+$\act_t$ & VLA policy가 내는 policy-level action. token, vector, waypoint, chunk, distribution일 수 있다. \\
+$\ctrlcmd_t$ & controller, driver, actuator가 실행하는 control command. velocity, torque, impedance target 등이다. \\
+$\conf_t$ & robot joint configuration 또는 generalized coordinate. \\
+$C_t$ & constraint set. collision, contact, joint limit, safety envelope를 포함한다. \\
+$h_t$ & history 또는 memory state. observation/action/outcome의 temporal context이다. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section*{Notation discipline}
+\addcontentsline{toc}{section}{Notation discipline}
+
+이 책에서 반복되는 기호는 전역 의미를 우선한다. 특히 $\act_t$는 VLA policy의 policy-level action, $\ctrlcmd_t$는 controller command, $\conf_t$는 robot configuration으로 고정한다. symbolic planner의 discrete action은 필요하면 $\alpha_k$, skill은 $\sigma_i$, runtime record는 $\rho_t$, metadata는 $m_i$, contact mode는 $\mu_t$로 쓴다. 같은 문자 하나로 state, skill, query, reward, record를 동시에 나타내지 않는 것이 원칙이다.
+
+일부 수식은 theorem이 아니라 diagnostic notation이다. 예를 들어 claim tuple, evidence vector, executability gap은 system을 읽기 위한 구조화된 표기이지, 모든 장에서 동일하게 측정되는 scalar metric이 아니다. 그런 경우 본문에서 ``diagnostic notation'' 또는 ``설계 원칙을 나타내는 notation''이라고 명시한다.
+
+\section*{주요 용어}
+\addcontentsline{toc}{section}{주요 용어}
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{@{}p{0.24\textwidth}p{0.70\textwidth}@{}}
+\toprule
+Term & 이 책에서의 의미 \\
+\midrule
+VLM & image/text semantic model. 장면을 설명하거나 언어 질의를 처리하지만, 그 자체가 robot execution을 보장하지는 않는다. \\
+VLA policy & observation, language, state estimate로부터 policy-level action을 내는 learned policy. \\
+Real VLA system & VLA policy, controller, monitor, safety, data, evaluation까지 포함한 책임 구조. \\
+Action representation & $\act_t$의 형식. token, continuous vector, waypoint, chunk, diffusion/flow sample 등이 포함된다. \\
+Control boundary & $\act_t$가 $\ctrlcmd_t$로 바뀌는 경계. 이 경계가 불명확하면 논문 claim이 실제 robot behavior로 해석되지 않는다. \\
+Data engine & data collection, curation, labeling, failure mining, evaluation replay가 반복되는 system loop. \\
+Safety shield & action 또는 controller reference를 safe set으로 projection, reject, revalidate하는 runtime layer. \\
+\bottomrule
+\end{tabularx}
+\end{center}

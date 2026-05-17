@@ -1,0 +1,284 @@
+\chapter{Control Interfaces}
+
+\section*{학습 목표}
+이 장은 VLA policy가 출력한 $\act_t$가 어떤 제어 interface를 거쳐 실제 robot command $\ctrlcmd_t$가 되는지 다룬다. Chapter 2가 state와 observation의 차이를 고정했다면, Chapter 3은 action proposal과 controller command의 차이를 고정한다.
+
+\begin{enumerate}
+  \item VLA action representation과 controller interface를 분리한다.
+  \item joint, Cartesian, waypoint, trajectory, impedance, MPC reference의 차이를 설명한다.
+  \item $\act_t \rightarrow \ctrlcmd_t$ mapping이 safety와 evaluation에 미치는 영향을 정식화한다.
+  \item Chapter 13의 action representation 논의를 위한 control-side 기준을 제공한다.
+\end{enumerate}
+
+\section{Control interface가 필요한 이유}
+
+VLA policy가 ``action을 출력한다''는 말은 충분하지 않다. Action이 무엇인지, 어떤 rate로 나오며, 어떤 coordinate frame을 쓰고, 어떤 controller가 그 action을 해석하는지 명시해야 한다. 실제 로봇은 neural network output을 그대로 실행하지 않는다. 대부분의 경우 VLA output은 controller reference, waypoint, target pose, short trajectory, 또는 high-level skill call이다 \cite{khatib1987,hogan1985,mayne2000}.
+
+Chapter 1의 notation을 다시 쓰면, VLA policy는
+\begin{equation}
+  \act_t = \policy(\obs_t, \conf_t, \task, \bel_t)
+  \label{eq:ch3-policy}
+\end{equation}
+를 출력한다. 하지만 robot driver는 보통 $\act_t$가 아니라
+\begin{equation}
+  \ctrlcmd_t = \controller(\act_t,\hat{\state}_t,\mathcal{C}_t)
+  \label{eq:ch3-controller-map}
+\end{equation}
+를 받는다. 여기서 $\controller$는 단순한 software wrapper가 아니다. 그것은 action representation을 물리적 command로 해석하는 interface contract이다.
+
+\begin{definitionbox}{Control interface}
+Control interface는 policy-level action $\act_t$가 robot hardware에 전달되기 전에 통과하는 해석 경계이다. 이 경계는 coordinate frame, unit, rate, limit, tracking law, safety filter, failure semantics를 포함한다.
+\end{definitionbox}
+
+\section{Joint-space interfaces}
+
+가장 직접적인 interface는 joint-space command이다. Robot configuration을 $\conf\in\R^n$이라 할 때, VLA 또는 downstream module은 target joint position, joint velocity, 또는 torque를 낼 수 있다.
+
+\subsection{Joint position target}
+
+Joint position interface는 다음과 같이 쓸 수 있다.
+\begin{equation}
+  \act_t = \conf^{ref}_{t+H},
+  \qquad
+  \ctrlcmd_t = K_p(\conf^{ref}_{t+H}-\conf_t)-K_d\dot{\conf}_t.
+  \label{eq:joint-position-control}
+\end{equation}
+
+이 interface는 단순하고 많은 robot API와 잘 맞는다. 그러나 VLA가 joint target을 직접 내면 morphology dependency가 매우 커진다. 같은 task라도 robot arm의 joint dimension, joint limit, kinematic chain이 다르면 action space가 달라진다. Multi-embodiment VLA에서 joint-space output이 어려운 이유가 여기에 있다.
+
+\subsection{Joint velocity target}
+
+Velocity command는 다음처럼 표현된다.
+\begin{equation}
+  \act_t = \dot{\conf}^{ref}_t,
+  \qquad
+  \ctrlcmd_t = \dot{\conf}^{ref}_t.
+  \label{eq:joint-velocity-control}
+\end{equation}
+단순해 보이지만, velocity command는 integration drift와 limit handling이 중요하다. Velocity를 오래 적분하면 joint limit, self-collision, workspace boundary를 넘을 수 있다. 따라서 velocity interface는 safety projection과 함께 쓰여야 한다.
+
+\subsection{Torque command}
+
+Torque-level interface는 가장 낮은 수준의 command이다.
+\begin{equation}
+  \act_t = \bm{\tau}^{ref}_t,
+  \qquad
+  \ctrlcmd_t = \bm{\tau}^{ref}_t.
+  \label{eq:torque-interface}
+\end{equation}
+Torque command는 표현력이 크지만 risk도 크다. 고주파 안정성, latency, actuator saturation, contact instability를 직접 다루어야 한다. VLA policy가 torque를 직접 출력하려면 control frequency, safety certification, dynamics generalization 문제가 매우 어려워진다.
+
+\begin{warningbox}{Torque output의 위험}
+Torque는 robot hardware에 가장 가까운 action이다. 학습 policy가 torque를 직접 내면 controller가 흡수하던 안정성 책임이 policy로 이동한다. 이 경우 inference delay, out-of-distribution state, contact uncertainty가 곧바로 safety issue가 된다.
+\end{warningbox}
+
+\section{Cartesian interfaces}
+
+대부분의 manipulation task는 joint보다 task-space에서 표현하기 쉽다. End-effector pose를 $\bm{x}_{ee}\in SE(3)$ 또는 local coordinate vector로 쓰면, VLA output은 target pose 또는 delta pose가 될 수 있다.
+
+\subsection{End-effector target pose}
+
+End-effector target pose interface는 다음처럼 쓸 수 있다.
+\begin{equation}
+  \act_t = \bm{x}^{ref}_{ee,t+H}.
+  \label{eq:ee-target}
+\end{equation}
+Controller는 inverse kinematics 또는 operational-space control을 통해 이를 joint command로 바꾼다.
+\begin{equation}
+  \dot{\conf}^{ref}_t
+  = J(\conf_t)^\dagger
+  K_x(\bm{x}^{ref}_{ee,t+H}-\bm{x}_{ee,t}).
+  \label{eq:ik-command}
+\end{equation}
+여기서 $J(\conf_t)$는 Jacobian, $J^\dagger$는 pseudo-inverse이다.
+
+이 interface는 robot morphology를 일부 숨길 수 있다. Policy는 end-effector motion을 내고, robot-specific kinematics는 controller가 처리한다. 그러나 singularity, joint limit, collision, orientation ambiguity는 여전히 controller가 해결해야 한다.
+
+\subsection{Delta pose}
+
+Delta pose interface는 VLA에서 자주 사용된다.
+\begin{equation}
+  \act_t = \Delta \bm{x}_{ee,t},
+  \qquad
+  \bm{x}^{ref}_{ee,t+1} = \bm{x}_{ee,t}\oplus \Delta \bm{x}_{ee,t}.
+  \label{eq:delta-pose}
+\end{equation}
+여기서 $\oplus$는 pose composition을 의미한다. Delta pose는 local correction에 유리하지만, scale과 coordinate frame에 민감하다. Camera frame 기준 delta인지, base frame 기준 delta인지, end-effector frame 기준 delta인지 명시하지 않으면 같은 vector가 완전히 다른 motion이 된다.
+
+\begin{table}[ht]
+\centering
+\caption{Cartesian interface에서 반드시 명시해야 할 항목}
+\label{tab:cartesian-contract}
+\small
+\begin{tabularx}{\textwidth}{p{32mm}X}
+\toprule
+항목 & 이유 \\
+\midrule
+Frame & base, camera, end-effector frame 중 무엇인지에 따라 motion 방향이 달라짐 \\
+Unit and scale & normalized action인지 metric meter/radian인지 구분 필요 \\
+Rate & delta가 control step당 변화인지 VLA inference step당 변화인지 명시 필요 \\
+Orientation representation & Euler, quaternion, axis-angle, 6D representation의 singularity와 normalization 문제 \\
+Limit handling & workspace, velocity, acceleration, joint limit projection 필요 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Waypoint and trajectory interfaces}
+
+Waypoint interface는 policy가 단일 command 대신 중간 목표를 제안하는 구조이다.
+\begin{equation}
+  \act_t = \bm{w}_{t:t+K}
+  =
+  \{\bm{x}^{ref}_{1},\ldots,\bm{x}^{ref}_{K}\}.
+  \label{eq:waypoint-sequence}
+\end{equation}
+Motion planner 또는 trajectory optimizer는 waypoint를 연결해 시간 매개화된 trajectory를 만든다.
+\begin{equation}
+  \xi^\star
+  =
+  \arg\min_{\xi}
+  J(\xi;\bm{w}_{t:t+K})
+  \quad
+  \text{s.t.}\quad
+  \xi(\tau)\in\mathcal{X}_{free},\;
+  \dot{\xi}(\tau)\in\mathcal{V},\;
+  \xi(0)=\state_t.
+  \label{eq:trajectory-optimization}
+\end{equation}
+
+Waypoint interface의 장점은 policy와 motion planning의 역할을 분리한다는 점이다. Policy는 semantic target 또는 local waypoint를 내고, planner는 collision-free path와 timing을 만든다. 단점은 planner failure가 policy failure처럼 보일 수 있다는 점이다. Evaluation log는 waypoint feasibility, planner failure, controller tracking failure를 분리해야 한다.
+
+\section{Impedance and operational-space interfaces}
+
+Contact-rich manipulation에서는 position tracking만으로 부족하다. 로봇이 물체를 밀거나, 잡거나, 삽입하거나, 사람 가까이에서 움직일 때는 compliance가 필요하다.
+
+\subsection{Impedance target}
+
+Impedance control은 end-effector가 가상의 spring-damper처럼 동작하도록 한다.
+\begin{equation}
+  \bm{F}_{cmd}
+  =
+  K_x(\bm{x}^{ref}-\bm{x})
+  +D_x(\dot{\bm{x}}^{ref}-\dot{\bm{x}})
+  +\bm{F}^{ff}.
+  \label{eq:impedance}
+\end{equation}
+이때 VLA policy는 position target뿐 아니라 stiffness, damping, force reference를 제안할 수도 있다.
+\begin{equation}
+  \act_t = (\bm{x}^{ref}_t, K_{x,t}, D_{x,t}, \bm{F}^{ff}_t).
+  \label{eq:impedance-action}
+\end{equation}
+
+이 interface는 manipulation에 강력하지만 safety risk도 크다. Stiffness를 잘못 선택하면 contact force가 커지고, damping이 부족하면 oscillation이 생긴다. 따라서 impedance parameter를 VLA가 직접 내는 경우에는 safety bound가 필요하다.
+
+\subsection{Operational-space control}
+
+Operational-space control은 task-space force를 joint torque로 변환한다.
+\begin{equation}
+  \bm{\tau}
+  =
+  J(\conf)^\top \bm{F}_{cmd}
+  + \bm{N}(\conf)^\top \bm{\tau}_{null}
+  + \bm{g}(\conf).
+  \label{eq:osc}
+\end{equation}
+여기서 $\bm{N}$은 null-space projection이다. 이 구조는 VLA policy가 task-space target을 내고, controller가 robot-specific dynamics를 처리하는 좋은 예이다.
+
+\section{MPC reference interface}
+
+Model predictive control(MPC)은 VLA output을 reference 또는 constraint로 받아 finite horizon optimization을 수행할 수 있다.
+
+\begin{equation}
+\begin{aligned}
+  \ctrlcmd_{t:t+H-1}^\star
+  =
+  \arg\min_{\ctrlcmd_{t:t+H-1}}
+  &\sum_{k=0}^{H}
+  \ell_x(\state_{t+k}, \act_t)
+  +\sum_{k=0}^{H-1}\ell_u(\ctrlcmd_{t+k}) \\
+  \text{s.t.}\quad
+  &\state_{t+k+1}=f(\state_{t+k},\ctrlcmd_{t+k}),\\
+  &\state_{t+k}\in\mathcal{X}_{safe},\quad
+  \ctrlcmd_{t+k}\in\mathcal{U}.
+\end{aligned}
+\label{eq:mpc-vla}
+\end{equation}
+
+여기서 $\act_t$는 target pose, cost parameter, forbidden region, subgoal, 또는 terminal set으로 들어갈 수 있다. MPC interface의 장점은 constraint와 prediction을 명시적으로 다룰 수 있다는 점이다. 단점은 model mismatch, optimization time, solver failure를 관리해야 한다는 점이다.
+
+\section{Safety projection}
+
+VLA output을 그대로 controller에 넣지 않고 safety set으로 project할 수 있다. 가장 단순한 형태는 다음이다.
+\begin{equation}
+  \tilde{\act}_t
+  =
+  \arg\min_{\act\in\mathcal{A}_{safe}(\hat{\state}_t)}
+  \|\act-\act_t\|^2.
+  \label{eq:safety-projection}
+\end{equation}
+이후 controller는 $\tilde{\act}_t$를 사용한다.
+\begin{equation}
+  \ctrlcmd_t = \controller(\tilde{\act}_t,\hat{\state}_t,\mathcal{C}_t).
+  \label{eq:projected-control}
+\end{equation}
+
+이 방식은 action space가 metric structure를 가질 때 유용하다. Continuous delta나 waypoint는 projection이 비교적 자연스럽다. 반면 action token은 물리적 distance metric이 명확하지 않기 때문에 projection이 어렵다. 이것이 action representation과 safety가 연결되는 지점이다.
+
+\section{Control interface별 failure mode}
+
+\begin{table}[ht]
+\centering
+\caption{Control interface별 대표 failure mode}
+\label{tab:control-failure}
+\small
+\begin{tabularx}{\textwidth}{p{28mm}X X}
+\toprule
+Interface & 강점 & 대표 failure mode \\
+\midrule
+Joint position & robot API와 단순 연결 & morphology-specific, joint limit violation \\
+Joint velocity & reactive correction 가능 & integration drift, accumulated unsafe motion \\
+Torque & full dynamics control 가능 & latency와 OOD state에서 unstable behavior \\
+End-effector pose & task-space 표현이 직관적 & IK failure, singularity, frame mismatch \\
+Delta pose & local closed-loop correction에 적합 & scale/frame ambiguity, drift \\
+Waypoint & planner와 결합 가능 & infeasible waypoint, planner/controller blame ambiguity \\
+Impedance target & contact-rich task에 적합 & stiffness/force unsafe setting \\
+MPC reference & constraint와 horizon을 명시 가능 & model mismatch, solver latency \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+이 표는 Chapter 13의 action taxonomy를 평가할 때 그대로 다시 사용된다. 어떤 action representation도 단독으로 좋거나 나쁘지 않다. 중요한 것은 task, controller, safety monitor, data log가 같은 interface contract를 공유하는가이다.
+
+\section{Evaluation log에 남겨야 할 control metadata}
+
+VLA paper가 real robot result를 보고할 때 control interface metadata가 빠지면 결과 해석이 불가능해진다. 최소한 다음 항목은 필요하다.
+
+\begin{itemize}
+  \item action type: token, delta pose, waypoint, velocity, torque 등
+  \item coordinate frame: base, camera, end-effector, world
+  \item VLA inference rate와 controller rate
+  \item downstream controller type
+  \item action scaling과 normalization
+  \item limit handling과 safety projection
+  \item planner 또는 controller failure count
+  \item human intervention과 reset policy
+\end{itemize}
+
+이 metadata가 있어야 benchmark success와 robot capability를 분리할 수 있다. 같은 success rate라도 torque-level policy와 waypoint+MPC system은 전혀 다른 evidence를 제공한다.
+
+\begin{casebox}{Case study: 같은 action, 다른 controller claim}
+``move 5 cm right''라는 action은 Cartesian delta controller에서는 local servo command이고, waypoint planner에서는 collision-checked target이며, impedance controller에서는 contact-compliant reference가 된다. 따라서 action string이 같아도 system claim은 다르다. 논문은 action syntax가 아니라 downstream controller를 밝혀야 한다.
+\end{casebox}
+
+\chapterwork
+{Operational-space control, impedance control, MPC를 Chapter 13의 action representation taxonomy와 함께 읽어라 \cite{khatib1987,hogan1985,mayne2000}.}
+{왜 VLA output $\act_t$를 robot command $\ctrlcmd_t$와 동일시하면 safety와 evaluation 해석이 약해지는가?}
+{하나의 tabletop task에 대해 delta pose, waypoint, impedance target 세 가지 controller interface를 설계하고 각각 필요한 metadata를 비교하라.}
+
+\section{Roboticist's Takeaway}
+
+\begin{definitionbox}{Chapter 3 Takeaway}
+VLA action은 output tensor가 아니라 control interface object이다. $\act_t$의 의미는 downstream controller $\controller$, state estimate $\hat{\state}_t$, safety constraint $\mathcal{C}_t$, command rate가 함께 정의할 때만 결정된다. 따라서 Real VLA 논문을 읽을 때는 model architecture만 보지 말고, $\act_t$가 어떤 controller를 통해 $\ctrlcmd_t$가 되는지 확인해야 한다.
+\end{definitionbox}
+
+다음 장은 이 control interface가 contact, force, manipulation과 만날 때 어떤 문제가 생기는지 다룬다.

@@ -1,0 +1,294 @@
+\chapter{Contact, Force, and Manipulation}
+
+\section*{학습 목표}
+
+이 장은 조작 VLA에서 접촉이 왜 별도 장으로 다루어져야 하는지를 설명한다. Chapter 2는 state와 observation의 차이를 다루었고, Chapter 3은 policy-level action과 controller command의 차이를 다루었다. Chapter 4의 초점은 action이 물체와 환경에 닿는 순간 발생하는 물리 제약이다.
+
+\begin{enumerate}
+  \item contact mode, contact force, friction cone을 수식으로 표현한다.
+  \item 위치 제어만으로는 contact-rich manipulation을 설명할 수 없음을 보인다.
+  \item hybrid position/force control, impedance, admittance를 VLA interface 관점에서 정리한다.
+  \item grasp, slip, insertion, pushing, opening에서 필요한 관측과 평가 metadata를 정의한다.
+\end{enumerate}
+
+\section{Manipulation은 접촉 문제다}
+
+자연어 명령은 조작을 간단한 동사로 표현한다. ``컵을 집어라'', ``서랍을 열어라'', ``peg를 hole에 넣어라'', ``천을 접어라''와 같은 명령은 high-level semantics에서는 단순해 보인다. 그러나 로봇이 실행해야 하는 문제는 기하학적 이동만이 아니다. gripper가 물체에 닿는 순간부터 문제는 contact mode, normal force, tangential friction, compliance, slip, deformation, sensing delay의 문제로 바뀐다 \cite{mason2001,hogan1985}.
+
+Real VLA stack에서 policy는 다음과 같이 action proposal을 낼 수 있다.
+\begin{equation}
+  \act_t = \policy(\obs_t,\conf_t,\task,\bel_t).
+  \label{eq:ch4-policy}
+\end{equation}
+하지만 contact-rich task에서 성공 여부는 $\act_t$가 목표 pose를 향하는가만으로 결정되지 않는다. 실제 실행은 접촉력과 상대 운동을 포함한다.
+\begin{equation}
+  \ctrlcmd_t
+  =
+  \controller(\act_t,\hat{\state}_t,\mathcal{C}_t,\hat{\bm{\lambda}}_t),
+  \label{eq:ch4-controller-contact}
+\end{equation}
+여기서 $\hat{\bm{\lambda}}_t$는 추정된 접촉력 또는 접촉 impulse이고, $\mathcal{C}_t$는 collision, force limit, joint limit, task constraint를 포함하는 constraint set이다.
+
+\begin{definitionbox}{Contact-rich manipulation}
+Contact-rich manipulation은 task outcome이 자유공간의 end-effector trajectory보다 접촉 상태와 접촉력에 더 민감한 조작 문제이다. 대표적인 예는 grasping, insertion, pushing, pulling, wiping, folding, door/drawer opening, tool use이다.
+\end{definitionbox}
+
+따라서 contact-rich VLA를 평가할 때는 semantic correctness와 geometric tracking을 분리해야 한다. 모델이 올바른 물체를 선택하고 올바른 방향으로 움직였더라도, 접촉력이 과도하거나 slip을 감지하지 못하거나 insertion contact를 잘못 해석하면 task는 실패한다.
+
+\section{Contact state and mode}
+
+접촉을 다루기 위해 먼저 상태를 확장한다. 자유공간에서 로봇 상태를 $\state_t$로 쓰면, 접촉 작업에서는 contact mode $m_t$와 contact force $\bm{\lambda}_t$를 함께 고려해야 한다.
+\begin{equation}
+  \state^{c}_t = (\state_t, m_t, \bm{\lambda}_t).
+  \label{eq:contact-state}
+\end{equation}
+contact mode는 이산 변수로 표현할 수 있다.
+\begin{equation}
+  \begin{aligned}
+  m_t \in \{&
+  \text{no-contact},\;
+  \text{sticking},\;
+  \text{sliding},\\
+  &
+  \text{impact},\;
+  \text{rolling}
+  \}.
+  \end{aligned}
+  \label{eq:contact-mode-set}
+\end{equation}
+
+이 표현은 단순한 표기상의 확장이 아니다. 같은 end-effector pose라도 contact mode가 다르면 필요한 제어가 달라진다. 예를 들어 peg insertion에서 end-effector 위치가 hole 근처에 있어도, peg가 rim에 걸려 sliding 중인지, 정렬되어 sticking 중인지, 충돌 후 튕겨 나오는 중인지에 따라 다음 action은 달라져야 한다.
+
+\begin{warningbox}{Vision-only observation의 한계}
+카메라 영상은 물체 identity와 approximate pose를 제공할 수 있지만 접촉력, stick-slip transition, hidden contact, micro-slip을 항상 제공하지 않는다. 접촉 작업에서 $\obs_t$가 image만으로 구성되면 belief $\bel_t$는 물리적으로 중요한 변수를 놓칠 수 있다.
+\end{warningbox}
+
+Real VLA에서는 contact mode가 명시적으로 추정될 수도 있고, recurrent policy나 history-conditioned policy 내부에 암묵적으로 표현될 수도 있다. 중요한 점은 시스템 설계와 평가에서 이 변수를 숨기지 않는 것이다.
+
+\section{Contact force and friction cone}
+
+단일 접촉점에서 접촉력을 normal component와 tangential component로 분해하자. 접촉 normal을 $\bm{n}$, 접촉력을 $\bm{f}$라 하면,
+\begin{equation}
+  f_n = \bm{n}^{\top}\bm{f},
+  \qquad
+  \bm{f}_t = \bm{f} - f_n\bm{n}.
+  \label{eq:normal-tangent-force}
+\end{equation}
+비침투 조건은 보통 normal force가 음수가 되지 않아야 함을 요구한다.
+\begin{equation}
+  f_n \ge 0.
+  \label{eq:normal-force-positive}
+\end{equation}
+Coulomb friction cone은 다음과 같이 쓸 수 있다.
+\begin{equation}
+  \|\bm{f}_t\|_2 \le \mu f_n,
+  \label{eq:friction-cone}
+\end{equation}
+여기서 $\mu$는 friction coefficient이다. 식 \eqref{eq:friction-cone}이 깨지면 접촉은 sticking을 유지하지 못하고 sliding으로 전이된다.
+
+VLA policy가 ``물체를 더 세게 잡아라''라는 식의 semantic instruction을 처리한다고 해도, 실제 safety bound는 다음과 같은 수치 조건으로 표현되어야 한다.
+\begin{equation}
+  f_n^{min} \le f_n \le f_n^{max},
+  \qquad
+  \|\bm{f}_t\|_2 \le \mu f_n.
+  \label{eq:grasp-force-bound}
+\end{equation}
+너무 작은 normal force는 slip을 만들고, 너무 큰 normal force는 물체 파손 또는 사람 접촉 위험을 만든다.
+
+\section{Hybrid position/force control}
+
+접촉 작업에서는 모든 방향을 위치로 제어하는 것이 적절하지 않다. 어떤 방향은 위치를 맞춰야 하고, 어떤 방향은 힘을 맞춰야 한다. Hybrid position/force control은 이 구분을 selection matrix로 표현한다. task-space displacement를 $\bm{x}$, force를 $\bm{F}$라 하고, 위치 제어 방향 선택 행렬을 $S_p$, 힘 제어 방향 선택 행렬을 $S_f$라 하자.
+\begin{equation}
+  S_p + S_f = I,
+  \qquad
+  S_pS_f = 0.
+  \label{eq:selection-matrices}
+\end{equation}
+하나의 단순한 control law는 다음 형태를 갖는다.
+\begin{equation}
+  \bm{F}_{cmd}
+  =
+  S_p K_x(\bm{x}^{ref}-\bm{x})
+  +
+  S_f(\bm{F}^{ref}-\bm{F}).
+  \label{eq:hybrid-force-position}
+\end{equation}
+
+이 식은 VLA interface 해석에 직접적인 의미를 갖는다. VLA가 end-effector target $\bm{x}^{ref}$만 출력하면 시스템은 force direction을 어떻게 다룰지 별도로 정해야 한다. 반대로 VLA가 contact mode 또는 force target까지 출력한다면 action은 다음과 같이 확장된다.
+\begin{equation}
+  \act_t =
+  (\bm{x}^{ref}_t,\bm{F}^{ref}_t,S_{p,t},S_{f,t},m_t^{ref}).
+  \label{eq:vla-contact-action}
+\end{equation}
+이 표현은 강력하지만 label 수집과 safety 검증이 어려워진다. 따라서 실제 시스템에서는 VLA가 contact mode를 직접 예측하기보다, primitive 또는 controller preset을 선택하게 하는 구조도 자주 사용된다.
+
+\section{Impedance and admittance}
+
+Chapter 3에서는 impedance를 control interface의 하나로 소개했다. 여기서는 contact 관점에서 그 의미를 다시 정리한다. Impedance control은 위치 오차를 바로 큰 힘으로 바꾸지 않고, 원하는 동적 관계를 설정한다.
+\begin{equation}
+  M_d(\ddot{\bm{x}}-\ddot{\bm{x}}^{ref})
+  +
+  D_d(\dot{\bm{x}}-\dot{\bm{x}}^{ref})
+  +
+  K_d(\bm{x}-\bm{x}^{ref})
+  =
+  \bm{F}_{ext}.
+  \label{eq:desired-impedance}
+\end{equation}
+여기서 $M_d,D_d,K_d$는 desired inertia, damping, stiffness이고, $\bm{F}_{ext}$는 외력이다. 높은 stiffness는 정확한 위치 추적에는 유리하지만 contact force overshoot를 만들 수 있다. 낮은 stiffness는 안전하고 compliant하지만 task precision이 낮아질 수 있다.
+
+Admittance control은 측정된 힘을 받아 reference motion을 수정한다.
+\begin{equation}
+  M_a\ddot{\bm{x}}^{ref}
+  +
+  D_a\dot{\bm{x}}^{ref}
+  +
+  K_a(\bm{x}^{ref}-\bm{x}^{nom})
+  =
+  \bm{F}_{meas}.
+  \label{eq:admittance}
+\end{equation}
+force/torque sensor가 좋은 경우 admittance는 stiff robot에서도 compliant behavior를 만들 수 있다. 그러나 force sensing delay와 noise가 크면 oscillation이 발생할 수 있다.
+
+\begin{table}[ht]
+\centering
+\caption{접촉 제어 방식과 VLA 결합 방식}
+\label{tab:contact-control-vla}
+\small
+\begin{tabularx}{\textwidth}{p{28mm}X X}
+\toprule
+방식 & VLA가 줄 수 있는 입력 & 주의할 점 \\
+\midrule
+Hybrid position/force & contact mode, force direction, target force & selection matrix 오류는 잘못된 방향의 힘 제어를 만든다 \\
+Impedance & target pose, stiffness, damping, feedforward force & stiffness bound와 contact safety limit이 필요하다 \\
+Admittance & nominal motion, force-response gain & sensor delay와 noise가 안정성을 좌우한다 \\
+Skill preset & insert, push, wipe, open 같은 primitive 선택 & primitive coverage 밖의 task에서는 일반화가 제한된다 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Grasp stability and slip}
+
+Grasping은 물체를 선택하고 gripper를 닫는 문제가 아니라 물체와 gripper 사이의 wrench balance 문제이다. 접촉점 $i$에서 접촉력이 $\bm{f}_i$이고 접촉 위치가 $\bm{r}_i$라면 물체에 작용하는 wrench는
+\begin{equation}
+  \bm{w}
+  =
+  \sum_i
+  \begin{bmatrix}
+  \bm{f}_i \\
+  \bm{r}_i \times \bm{f}_i
+  \end{bmatrix}.
+  \label{eq:contact-wrench}
+\end{equation}
+외부 wrench $\bm{w}_{ext}$를 상쇄하려면 다음 조건을 만족해야 한다.
+\begin{equation}
+  \bm{w} + \bm{w}_{ext} = \bm{0},
+  \qquad
+  \bm{f}_i \in \mathcal{F}_i,
+  \label{eq:wrench-balance}
+\end{equation}
+여기서 $\mathcal{F}_i$는 각 접촉점의 friction cone이다.
+
+Slip은 접촉면의 tangential force가 friction limit에 가까워질 때 발생한다. 단순한 slip margin은 다음과 같이 정의할 수 있다.
+\begin{equation}
+  \rho_i = \mu_i f_{n,i} - \|\bm{f}_{t,i}\|_2.
+  \label{eq:slip-margin}
+\end{equation}
+$\rho_i > 0$이면 sticking margin이 있고, $\rho_i \le 0$이면 slip 위험이 있다. VLA가 action을 생성하더라도 grasp controller는 이 margin을 감시해야 한다.
+
+\begin{definitionbox}{Contact success}
+조작에서 성공은 object pose가 목표에 도달했는가만으로 정의되면 부족하다. 접촉 성공은 slip margin, force bound, collision absence, object damage absence, recovery behavior까지 포함해야 한다.
+\end{definitionbox}
+
+\section{Tactile and force sensing}
+
+접촉 정보는 vision만으로 안정적으로 복원되기 어렵다. force/torque sensor, tactile array, joint torque estimate, motor current, gripper position error는 모두 contact observation이 될 수 있다. VLA 관점에서는 observation vector를 다음처럼 확장할 수 있다.
+\begin{equation}
+  \obs_t =
+  (\bm{I}_t,\bm{d}_t,\conf_t,\dot{\conf}_t,
+  \bm{f}^{ee}_t,\bm{z}^{tactile}_t,\bm{g}_t),
+  \label{eq:contact-observation}
+\end{equation}
+여기서 $\bm{I}_t$는 image, $\bm{d}_t$는 depth, $\bm{f}^{ee}_t$는 end-effector force/torque, $\bm{z}^{tactile}_t$는 tactile feature, $\bm{g}_t$는 gripper state이다.
+
+센서가 추가되면 모델이 자동으로 contact를 이해한다고 보면 안 된다. sampling rate, time alignment, calibration, sensor saturation, tactile-to-action latency가 함께 기록되어야 한다. Chapter 2의 time alignment 문제는 contact sensing에서 더 심각해진다.
+
+\section{Examples: insertion, pushing, and opening}
+
+Contact-rich manipulation은 task마다 필요한 물리 변수가 다르다.
+
+\begin{table}[ht]
+\centering
+\caption{대표 contact-rich task와 필요한 물리 정보}
+\label{tab:contact-rich-examples}
+\small
+\begin{tabularx}{\textwidth}{p{26mm}X X}
+\toprule
+Task & 필요한 정보 & 대표 failure \\
+\midrule
+Peg insertion & hole pose, chamfer, contact normal, axial force, lateral force & rim contact, jamming, excessive insertion force \\
+Pushing & object support friction, contact point, pushing direction, slip state & object rotation, loss of contact, obstacle collision \\
+Drawer opening & handle grasp, pulling direction, joint constraint, friction, force limit & handle slip, wrong pull direction, over-force \\
+Wiping & surface normal, contact pressure, coverage path, compliance & too low pressure, too high pressure, missed area \\
+Cloth folding & deformable state, pinch point, tension, self-occlusion & hidden fold error, slip, irreversible wrinkle \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+이 표의 목적은 task taxonomy가 아니라 evaluation taxonomy이다. 같은 VLA architecture라도 contact profile이 다르면 필요한 observation과 controller가 달라진다. 따라서 ``manipulation benchmark''라는 하나의 score만으로는 시스템의 실제 능력을 설명하기 어렵다.
+
+\section{Safety filter for contact}
+
+접촉 안전은 collision avoidance보다 좁은 문제가 아니다. collision이 없더라도 힘이 과하면 위험하고, 힘이 작아도 slip으로 인해 위험한 상태가 될 수 있다. 하나의 단순한 safety filter는 다음과 같이 쓸 수 있다.
+\begin{equation}
+  \tilde{\act}_t
+  =
+  \arg\min_{\act\in\mathcal{A}}
+  \|\act-\act_t\|^2
+  \quad
+  \text{s.t.}\quad
+  f_n(\act,\hat{\state}_t)\le f_n^{max},
+  \;
+  \rho_i(\act,\hat{\state}_t)\ge \rho^{min}.
+  \label{eq:contact-safety-filter}
+\end{equation}
+이 식은 실제 구현에서는 conservative approximation으로 바뀐다. force prediction이 정확하지 않으면 measured force threshold, controller-side torque limit, stop condition, human supervision이 함께 사용된다.
+
+VLA policy가 contact mode를 잘못 판단했을 때 safety layer는 세 가지 중 하나를 선택해야 한다.
+\begin{equation}
+  d_t \in \{\text{allow},\text{modify},\text{stop/recover}\}.
+  \label{eq:contact-safety-decision}
+\end{equation}
+contact-rich task에서 recovery는 필수 기능이다. insertion 실패 후 살짝 빼고 다시 정렬하기, grasp slip 후 재파지하기, drawer opening에서 handle을 다시 잡기 같은 행동은 단순 success/failure label보다 중요한 system capability이다.
+
+\section{Evaluation metadata}
+
+Contact-rich VLA 실험은 최소한 다음 metadata를 기록해야 한다.
+
+\begin{itemize}
+  \item contact sensor type: force/torque, tactile, joint torque estimate, motor current
+  \item controller type: position, hybrid force/position, impedance, admittance, MPC
+  \item control frequency and VLA inference frequency
+  \item maximum measured force and torque
+  \item force threshold and stop condition
+  \item slip or contact-loss detection rule
+  \item recovery attempts and recovery success rate
+  \item object damage, environment collision, human intervention count
+\end{itemize}
+
+이 metadata가 없으면 benchmark score를 해석하기 어렵다. 어떤 모델은 semantic grounding이 좋아서 성공할 수도 있고, 어떤 모델은 controller가 contact error를 흡수해서 성공할 수도 있다. Real VLA 연구에서는 이 둘을 분리해 기록해야 한다.
+
+\begin{casebox}{Case study: vision-only success와 contact failure}
+VLA가 peg와 hole을 정확히 찾더라도 insertion 중 접촉력이 증가하고 미세 정렬이 실패하면 task는 멈춘다. 이 경우 image-text grounding은 성공했지만 contact mode와 compliance control이 실패한 것이다. success rate만 보고하면 grounding과 contact execution을 구분할 수 없다.
+\end{casebox}
+
+\chapterwork
+{Mason의 manipulation mechanics와 impedance control을 함께 읽고, language-conditioned manipulation이 왜 contact mechanics를 피할 수 없는지 확인하라 \cite{mason2001,hogan1985}.}
+{contact-rich task에서 ``object를 정확히 보았다''와 ``object를 안전하게 조작했다''는 왜 다른 claim인가?}
+{drawer opening task에 대해 contact sensor, force threshold, slip/contact-loss label, recovery action을 포함한 evaluation log를 설계하라.}
+
+\section{요약}
+
+Contact는 Real VLA에서 예외 상황이 아니라 manipulation action의 기본 문법이다. VLA가 language와 vision을 통해 task intent를 잘 이해하더라도, 접촉 순간의 force, friction, compliance, slip, hidden state를 다루지 못하면 실제 조작은 실패한다. 따라서 contact-rich VLA는 policy architecture만으로 정의되지 않는다. 그것은 contact-aware observation, controller interface, force safety, recovery, evaluation log가 함께 있는 system이다.
+
+다음 장에서는 이 물리적 실행 문제 위에 planning과 motion planning, 그리고 task and motion planning을 올린다. 접촉을 고려한 action이 가능하려면, 먼저 어떤 subgoal과 constraint를 어떤 순서로 달성해야 하는지 결정해야 하기 때문이다.

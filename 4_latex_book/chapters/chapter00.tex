@@ -1,0 +1,297 @@
+\chapter{이 책의 기획 의도}
+
+\section*{학습 목표}
+이 장은 기술 개념을 본격적으로 설명하기 전에, 이 책이 어떤 문제의식으로 쓰였는지 고정한다. 이 장을 읽고 나면 독자는 다음을 이해해야 한다.
+
+\begin{enumerate}
+  \item 이 책이 VLA를 단일 모델이 아니라 실제 로봇 시스템의 책임 구조로 다루는 이유를 설명할 수 있다.
+  \item Vision-language model, robot learning policy, controller, planner, data engine, safety layer를 분리해서 읽어야 하는 이유를 이해한다.
+  \item 이 책에서 말하는 ``real''의 의미가 benchmark 성능이 아니라 물리 실행, 실패 기록, 안전 보장, 재현 가능한 평가와 연결됨을 이해한다.
+  \item 뒤 장들을 model catalog가 아니라 engineering contract의 연속으로 읽을 수 있다.
+\end{enumerate}
+
+\section{왜 이 책이 필요한가}
+
+Vision-Language-Action(VLA)은 로봇 연구에서 빠르게 중심 주제가 되고 있다. 큰 vision-language model은 장면을 읽고, 언어 지시를 해석하고, 행동을 예측하는 방향으로 확장되고 있다. 그러나 로봇공학자의 관점에서 중요한 질문은 조금 다르다. ``어떤 모델이 가장 큰가?'' 또는 ``어떤 benchmark에서 점수가 높은가?''가 아니라 다음 질문이 먼저 와야 한다.
+
+\begin{quote}
+언어와 시각으로부터 나온 action이 실제 로봇의 물리 실행, 제어 안정성, 안전 조건, 실패 복구, 데이터 기록, 평가 주장으로 어떻게 연결되는가?
+\end{quote}
+
+이 책은 이 질문을 다루기 위해 쓰였다. VLA를 단순히 VLM 위에 action head를 붙인 모델로 설명하면 핵심 문제가 빠진다. 로봇은 문장을 출력하는 시스템이 아니라, 상태를 추정하고, 접촉을 만들고, actuator limit 안에서 움직이고, 실패하면 멈추거나 복구해야 하는 물리 시스템이다. 따라서 Real VLA는 모델 구조만으로 완성되지 않는다. Real VLA는 다음 mapping 전체를 책임지는 시스템이다.
+
+\begin{equation}
+  (\obs_{1:t}, \task, \bel_t, \mathcal{C}_t)
+  \longrightarrow
+  (\act_t, \ctrlcmd_t, r_t, e_t),
+  \label{eq:ch0-real-vla-map}
+\end{equation}
+
+여기서 $\obs_{1:t}$는 observation history, $\task$는 language instruction 또는 task specification, $\bel_t$는 state belief, $\mathcal{C}_t$는 physical/safety constraint이다. 출력의 $\act_t$는 policy-level action, $\ctrlcmd_t$는 controller command, $r_t$는 runtime record, $e_t$는 evaluation evidence이다. 이 책의 핵심은 $\act_t$ 하나가 아니라 이 전체 tuple을 보는 데 있다.
+
+\begin{definitionbox}{이 책의 중심 명제}
+Real VLA는 로봇공학을 대체하는 foundation model이 아니다. Real VLA는 perception, language, planning, control, data, evaluation, safety를 하나의 embodied system 안에서 다시 연결하는 interface이다.
+\end{definitionbox}
+
+이 명제를 받아들이면 책의 구조가 자연스럽게 결정된다. 먼저 state, dynamics, estimation, control, manipulation, planning을 다시 확인해야 한다. 그 다음 imitation learning, reinforcement learning, visuomotor policy, VLM, LLM planner, VLA policy를 연결해야 한다. 마지막으로 action representation, data engine, fine-tuning, evaluation, hierarchy, real-time deployment, safety, humanoid embodiment, whole-book synthesis, future direction을 다루어야 한다. 이 순서는 역사적 유행의 순서가 아니라 책임이 닫히는 순서이다.
+
+\section{이 책이 아닌 것}
+
+이 책은 VLA 논문 목록을 나열하는 survey가 아니다. 특정 모델의 leaderboard 순위를 외우기 위한 책도 아니다. 또한 classical robotics를 낡은 배경지식으로 밀어내고 foundation model이 모든 것을 해결한다는 이야기를 하려는 책도 아니다.
+
+\begin{warningbox}{모델 이름은 시스템 책임을 대신하지 못한다}
+어떤 VLA 모델이 강력한 backbone을 사용하더라도, action representation, controller interface, timing budget, data mixture, safety gate, evaluation protocol이 명시되지 않으면 실제 로봇 시스템의 capability claim은 불완전하다.
+\end{warningbox}
+
+이 책은 다음 세 가지 설명 방식을 피한다.
+
+\begin{enumerate}
+  \item \textbf{VLM 확장론}: VLA를 VLM에 action token만 추가한 구조로 설명하는 방식.
+  \item \textbf{Benchmark 환원론}: benchmark success rate를 곧 robot capability로 읽는 방식.
+  \item \textbf{End-to-end 만능론}: controller, planner, estimator, safety monitor를 모두 암묵적 network 내부로 넣으면 문제가 사라진다고 보는 방식.
+\end{enumerate}
+
+대신 이 책은 각 장에서 다음 질문을 반복한다.
+
+\begin{quote}
+이 방법은 어떤 입력을 받아 어떤 출력을 만들며, 그 출력은 다음 layer에서 어떤 가정 하에 실행 가능한가?
+\end{quote}
+
+이 질문은 단순하지만 강력하다. VLA 연구가 실제 robot deployment로 가까워질수록 모든 주장은 이 질문을 통과해야 한다.
+
+\section{대상 독자와 전제 지식}
+
+이 책은 로봇공학, 제어, planning, robot learning, embodied AI를 연구하거나 수업에서 다루는 독자를 대상으로 한다. 이상적인 독자는 다음 배경 중 일부를 이미 알고 있다.
+
+\begin{itemize}
+  \item rigid-body kinematics와 configuration space의 기본 개념
+  \item feedback control, trajectory tracking, impedance 또는 operational-space control의 기본 개념
+  \item supervised learning, imitation learning, reinforcement learning의 기본 notation
+  \item transformer, VLM, LLM의 기본 구조
+  \item robot dataset, benchmark, real-robot experiment의 기본 형식
+\end{itemize}
+
+그러나 이 책은 각 분야를 처음부터 교과서적으로 다시 쓰지 않는다. 목적은 control textbook, planning textbook, deep learning textbook을 대체하는 것이 아니다. 목적은 이 분야들이 Real VLA system 안에서 어떤 책임을 갖는지 재배치하는 것이다.
+
+따라서 독자는 다음 관점으로 읽어야 한다. 어떤 장이 classical topic을 다루더라도, 그것은 과거 기술을 복습하기 위해서가 아니라 VLA가 물리 시스템에 들어갈 때 남는 constraint를 보기 위해서이다. 어떤 장이 foundation model을 다루더라도, 그것은 모델 규모를 찬양하기 위해서가 아니라 action, planning, data, safety interface를 해석하기 위해서이다.
+
+\section{책 전체의 판정 기준}
+
+이 책에서 하나의 VLA system claim은 다음 조건을 만족할수록 강하다고 본다.
+
+\begin{equation}
+  \mathcal{K}
+  =
+  \{ \mathcal{M}, \mathcal{A}, \mathcal{P}, \mathcal{U},
+     \mathcal{D}, \mathcal{E}, \mathcal{S} \},
+  \label{eq:ch0-claim-contract}
+\end{equation}
+
+여기서 $\mathcal{M}$은 model, $\mathcal{A}$는 action representation, $\mathcal{P}$는 planner 또는 policy interface, $\mathcal{U}$는 low-level control interface, $\mathcal{D}$는 data engine, $\mathcal{E}$는 evaluation protocol, $\mathcal{S}$는 safety/assurance layer이다. 이 중 하나라도 비어 있으면 claim은 제한된다.
+
+\begin{table}[ht]
+\centering
+\caption{Real VLA claim을 읽는 기준}
+\label{tab:ch0-claim-criteria}
+\small
+\begin{tabularx}{\textwidth}{p{24mm}X X}
+\toprule
+항목 & 질문 & 약한 claim의 전형적 형태 \\
+\midrule
+Model & 어떤 observation과 language context를 처리하는가? & backbone 이름만 제시함 \\
+Action & action이 token, pose, delta, chunk, skill 중 무엇인가? & action semantics가 불명확함 \\
+Control & action이 어떤 controller command로 변환되는가? & controller가 black box로 남음 \\
+Planning & long-horizon constraint와 recovery를 어떻게 다루는가? & plausible plan을 executable plan처럼 제시함 \\
+Data & 어떤 embodiment와 failure가 데이터에 들어갔는가? & success trajectory만 강조함 \\
+Evaluation & 어떤 protocol에서 어떤 confidence로 검증했는가? & benchmark score만 제시함 \\
+Safety & unsafe success, near miss, intervention을 어떻게 기록하는가? & 성공률과 안전성을 분리하지 않음 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+이 표는 뒤 장 전체의 읽기 규칙이다. 예를 들어 Chapter 13에서 action representation을 다룰 때는 $\mathcal{A}$와 $\mathcal{U}$의 경계를 본다. Chapter 14와 16에서는 $\mathcal{D}$와 $\mathcal{E}$를 본다. Chapter 19에서는 $\mathcal{S}$를 독립된 afterthought가 아니라 system claim의 일부로 다룬다.
+
+\section{Evidence tier와 citation policy}
+
+VLA 분야는 빠르게 움직인다. 그래서 이 책은 모든 reference를 같은 무게로 읽지 않는다. Kalman filtering, motion planning, operational-space control, impedance control처럼 확립된 이론은 textbook 또는 고전 논문을 기준으로 둔다 \cite{kalman1960,khatib1987,hogan1985,lavalle2006}. 반면 OpenVLA, $\pi_0$, FAST, OpenVLA-OFT, GR00T N1 같은 최신 VLA 사례는 대개 arXiv, project page, released code, company technical report의 형태로 먼저 등장한다 \cite{openvla2024,pi02024,fast2025,openvlaoft2025,grootn12025}. 따라서 최신 사례는 ``증명된 표준''이 아니라 ``현재 공개된 evidence로 읽는 case''로 다룬다.
+
+\begin{definitionbox}{Evidence tier}
+\begin{itemize}
+  \item \textbf{Tier A}: textbook, established theory, widely reproduced classical result.
+  \item \textbf{Tier B}: peer-reviewed paper 또는 널리 재현된 benchmark paper.
+  \item \textbf{Tier C}: arXiv preprint, project page, released code가 있는 최신 연구.
+  \item \textbf{Tier D}: company technical report, official blog, demo 중심 발표.
+\end{itemize}
+Tier C/D 사례는 engineering insight를 얻기 위해 분석하되, real-robot deployment evidence가 부족하면 capability claim을 강하게 읽지 않는다.
+\end{definitionbox}
+
+이 정책은 최신성을 낮추기 위한 장치가 아니다. 오히려 최신 VLA 흐름을 더 정확히 읽기 위한 장치다. 예를 들어 action representation 개선 논문은 Chapter 13의 control boundary 관점에서 매우 중요하지만, 그 claim이 real robot task, simulation task, throughput benchmark 중 어디에서 닫혔는지는 별도로 기록해야 한다.
+
+\section{Real VLA를 시스템으로 보는 이유}
+
+로봇 시스템은 여러 rate로 동작한다. VLM inference는 수 Hz 이하일 수 있고, policy head는 수 Hz에서 수십 Hz로 동작할 수 있으며, low-level controller는 수백 Hz에서 kHz로 동작한다. Safety monitor와 state estimator는 또 다른 rate를 가진다. 이 차이를 무시하면 VLA를 실제 하드웨어에 올릴 때 문제가 생긴다.
+
+이를 간단히 쓰면 다음과 같다.
+
+\begin{align}
+  \bel_t &= \mathrm{Estimate}(\bel_{t-1}, \obs_t, \ctrlcmd_{t-1}), \\
+  z_t &= \mathrm{Reason}(\task, \bel_t, m_t), \\
+  \act_t &= \policy(\obs_t, z_t, \conf_t), \\
+  \ctrlcmd_t &= \controller(\act_t, \hat{\state}_t, \mathcal{C}_t), \\
+  \rho_t &= \mathrm{Monitor}(\task, \act_t, \ctrlcmd_t, \obs_{t+1}).
+  \label{eq:ch0-runtime-loop}
+\end{align}
+
+$z_t$는 embodied reasoning 결과, $m_t$는 memory 또는 retrieved context, $\rho_t$는 runtime monitor output이다. Real VLA에서 중요한 것은 이 식의 각 항이 실제 system에서 누가 계산하고, 어느 주기로 갱신하며, 실패 시 어떤 fallback을 갖는지이다.
+
+이 관점은 end-to-end learning과 모순되지 않는다. learned policy가 더 많은 책임을 흡수할수록 interface는 단순해질 수 있다. 그러나 책임이 사라지는 것은 아니다. 학습된 network 내부로 들어간 책임은 evaluation, logging, stress test를 통해 다시 외부에서 검증되어야 한다.
+
+\section{장 구성의 의도}
+
+이 책은 크게 다섯 부분으로 읽을 수 있다.
+
+\begin{enumerate}
+  \item \textbf{Robotics foundation}: state, dynamics, estimation, control, contact, planning을 Real VLA의 실행 조건으로 재정리한다.
+  \item \textbf{Learning foundation}: imitation learning, reinforcement learning, visuomotor policy가 VLA policy의 직접 조상임을 설명한다.
+  \item \textbf{Language and foundation model bridge}: transformers, VLMs, LLM/VLM planner, planner+skills 구조가 VLA로 어떻게 이어지는지 다룬다.
+  \item \textbf{VLA system core}: action representation, data engine, adaptation, evaluation protocol을 통해 model claim을 system claim으로 바꾼다.
+  \item \textbf{Deployment and assurance}: hierarchy, real-time constraint, safety, humanoid embodiment, whole-book synthesis, future direction을 다룬다.
+\end{enumerate}
+
+이 구분은 독립된 분야 소개가 아니다. 각 부분은 다음 부분의 전제 조건이다. Control을 모르면 action representation을 해석하기 어렵고, planning을 모르면 LLM/VLM planner의 한계를 읽기 어렵다. Imitation learning과 covariate shift를 모르면 VLA data engine의 의미가 약해진다. Evaluation protocol을 모르면 benchmark success와 robot capability를 분리할 수 없다.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[
+  node distance=5mm,
+  stage/.style={draw=rvlaBlue, fill=rvlaGray, rounded corners=1mm, align=left,
+    text width=112mm, minimum height=10mm, font=\sffamily\small},
+  arrow/.style={-Latex, thick, draw=rvlaBlue}
+]
+\node[stage] (ch0) {\textbf{Ch0--Ch1: 문제 설정과 정의}\\
+Real VLA를 model catalog가 아니라 robot system contract로 정의한다.};
+\node[stage, below=of ch0] (foundation) {\textbf{Ch2--Ch5: Robotics foundation}\\
+state, estimation, control, contact, planning이 action을 물리 실행으로 바꾸는 조건을 만든다.};
+\node[stage, below=of foundation] (learning) {\textbf{Ch6--Ch8: Learning foundation}\\
+imitation learning, RL, visuomotor policy가 language-conditioned action policy의 직접 기반이 된다.};
+\node[stage, below=of learning] (language) {\textbf{Ch9--Ch12: Language/model bridge}\\
+transformer, VLM, LLM planner, planner+skills가 VLA로 넘어가는 구조적 경로를 제공한다.};
+\node[stage, below=of language] (core) {\textbf{Ch13--Ch16: VLA system core}\\
+action representation, data engine, adaptation, evaluation이 model output을 system claim으로 바꾼다.};
+\node[stage, below=of core] (deploy) {\textbf{Ch17--Ch22: Deployment and assurance}\\
+hierarchy, real-time runtime, safety, humanoid embodiment, whole-book synthesis, future direction으로 실제 배치 조건을 닫는다.};
+
+\draw[arrow] (ch0) -- (foundation);
+\draw[arrow] (foundation) -- (learning);
+\draw[arrow] (learning) -- (language);
+\draw[arrow] (language) -- (core);
+\draw[arrow] (core) -- (deploy);
+\end{tikzpicture}
+\caption{전체 장 구성의 의존 관계. 위쪽 장은 아래쪽 장의 배경지식이 아니라 interface와 claim을 해석하기 위한 전제 조건이다.}
+\label{fig:ch0-book-architecture}
+\end{figure}
+
+\subsection{각 챕터의 존재 이유}
+
+각 장은 독립적인 주제 소개가 아니라 하나의 Real VLA claim을 닫기 위한 역할을 갖는다. 표~\ref{tab:ch0-chapter-roles}는 각 장이 왜 필요한지, 그리고 뒤 장을 읽을 때 어떤 해석 기준을 제공하는지 정리한다.
+
+{\small
+\setlength{\tabcolsep}{3pt}
+\setlength{\LTleft}{0pt}
+\setlength{\LTright}{0pt}
+\setlength{\LTcapwidth}{\textwidth}
+\refstepcounter{table}\label{tab:ch0-chapter-roles}
+\begin{longtable}{@{}>{\RaggedRight\arraybackslash}p{7mm}>{\RaggedRight\arraybackslash}p{32mm}>{\RaggedRight\arraybackslash}p{49mm}>{\RaggedRight\arraybackslash}p{35mm}@{}}
+\multicolumn{4}{@{}c@{}}{\tablename~\ref{tab:ch0-chapter-roles}: 각 챕터의 존재 이유와 후속 장의 해석 기준}\\[0.4em]
+\toprule
+장 & 제목 & 존재 이유 & 후속 장의 해석 기준 \\
+\midrule
+\endfirsthead
+\multicolumn{4}{@{}l}{\sffamily\small 표~\ref{tab:ch0-chapter-roles} 계속}\\
+\toprule
+장 & 제목 & 존재 이유 & 후속 장의 해석 기준 \\
+\midrule
+\endhead
+\midrule
+\multicolumn{4}{r@{}}{\sffamily\small 다음 페이지에 계속}\\
+\endfoot
+\bottomrule
+\endlastfoot
+0 & 이 책의 기획 의도 & 책 전체를 model survey가 아니라 engineering contract로 읽게 만든다. & Real VLA claim을 평가하는 기준 \\
+1 & Real VLA란 무엇인가 & VLA를 VLM 확장이 아니라 robot system 문제로 재정의한다. & responsibility layer와 기본 notation \\
+2 & State, Dynamics, and Estimation & policy 입력이 단순 image가 아니라 추정된 state와 belief 위에 있음을 보인다. & $\state$, $\bel$, observation/state 구분 \\
+3 & Control Interfaces & policy action과 controller command의 차이를 고정한다. & $\act_t \rightarrow \ctrlcmd_t$ interface \\
+4 & Contact, Force, and Manipulation & manipulation이 geometry만이 아니라 contact와 force constraint 문제임을 보인다. & contact-aware action 해석 \\
+5 & Planning, Motion Planning, and TAMP & language goal이 executable plan이 되려면 feasibility check가 필요함을 보인다. & subgoal, constraint, recovery planning \\
+6 & Imitation Learning and Covariate Shift & VLA policy 학습의 기본 문제가 distribution shift임을 설명한다. & demonstration quality와 rollout failure 관점 \\
+7 & RL, Optimal Control, and Control as Inference & reward, objective, uncertainty, feedback을 action policy 관점으로 연결한다. & policy optimization과 safety trade-off \\
+8 & Visuomotor Policies & language가 붙기 전 image-to-action policy의 구조와 한계를 정리한다. & observation-to-action backbone 관점 \\
+9 & Transformers, VLMs, and Grounding & VLM이 VLA에 주는 semantic prior와 grounding gap을 분리한다. & language/vision representation 관점 \\
+10 & LLM/VLM as Robot Planner & 큰 모델을 planner로 쓸 때 plausible plan과 executable plan의 차이를 보인다. & planner proposal과 verifier 구조 \\
+11 & From Planner + Skills to VLA & skill library 기반 구조가 learned VLA policy로 넘어가는 경계를 설명한다. & skill, action, policy의 spectrum \\
+12 & Robotics Transformer Era & RT 계열과 multi-embodiment learning이 action token 관점을 만든 흐름을 정리한다. & sequence prediction으로서의 action \\
+13 & Action Representation & VLA 출력이 무엇인지 정의하는 핵심 API 장이다. & token, pose, delta, chunk, trajectory target \\
+14 & Data Engines & VLA 성능이 data collection, correction, failure mining loop에 의존함을 보인다. & dataset schema와 data quality 기준 \\
+15 & Adaptation and Fine-Tuning & pretrained VLA가 특정 robot/task로 옮겨갈 때 필요한 adaptation 문제를 정리한다. & fine-tuning과 deployment claim의 경계 \\
+16 & Evaluation and Benchmarking & benchmark success와 robot capability를 분리해서 주장하는 법을 정한다. & evaluation protocol과 confidence \\
+17 & Hierarchical VLA and Embodied Reasoning & 단일 policy가 아니라 reasoning layer와 action layer가 나뉘는 구조를 다룬다. & hierarchy, monitor, replan trigger \\
+18 & Real-Time and Hardware-Aware VLA & VLA가 실제 hardware timing, memory, compute budget을 만족해야 함을 보인다. & latency budget과 runtime architecture \\
+19 & Safety and Assurance & success와 safety를 분리하고, unsafe success를 시스템 claim에서 다룬다. & safety gate, incident log, assurance case \\
+20 & Humanoids and Whole-Body VLA & whole-body embodiment에서는 balance, contact, locomotion이 action 의미를 바꾼다. & whole-body action/evaluation 조건 \\
+21 & What We Have Learned & 책 전체에서 배운 state, action, control, data, evaluation, safety의 연결 구조를 다시 묶는다. & Real VLA system contract 요약 \\
+22 & Future Directions & 앞 장의 responsibility layer를 기반으로 연구 방향과 남은 병목을 정리한다. & 향후 연구 problem statement \\
+\end{longtable}
+\addtocounter{table}{-1}
+}
+
+이 표에서 중요한 점은 장 번호가 단순 난이도 순서가 아니라는 것이다. Chapter 13은 중간에 있지만 사실상 책 전체의 action API를 정의한다. Chapter 14와 16은 뒤쪽에 있지만 부록이 아니라 claim을 검증하는 핵심 장이다. Chapter 19 역시 deployment 이후에 붙는 윤리 장이 아니라, Chapter 1에서 정의한 Real VLA system의 필수 layer이다.
+
+\section{공학적 엄밀성의 기준}
+
+이 책은 비유 중심의 설명을 피한다. 필요한 경우 직관적 설명을 사용하지만, 핵심 주장은 가능한 한 변수, mapping, interface, metric, failure mode로 표현한다. 특히 다음 네 가지를 엄격히 구분한다.
+
+\begin{enumerate}
+  \item \textbf{Task}: 언어 또는 symbolic form으로 표현된 목표.
+  \item \textbf{Policy action}: learned policy가 내는 action object.
+  \item \textbf{Controller command}: robot driver 또는 servo loop가 받는 물리 명령.
+  \item \textbf{Evidence}: claim을 뒷받침하는 log, metric, protocol, failure record.
+\end{enumerate}
+
+이 구분을 notation으로 쓰면 하나의 deployment episode는 다음 기록으로 남아야 한다.
+
+\begin{equation}
+  \tau =
+  \{(\obs_t, \bel_t, z_t, \act_t, \ctrlcmd_t, y_t, \rho_t)\}_{t=1}^{T},
+  \label{eq:ch0-episode-record}
+\end{equation}
+
+여기서 $y_t$는 outcome signal 또는 event label이다. 단순한 success/failure label만으로는 충분하지 않다. 성공했더라도 near miss가 있었는지, 사람 intervention이 있었는지, controller saturation이 있었는지, planner timeout이 있었는지 기록해야 한다. 이 기록이 없으면 다음 data collection, fine-tuning, safety review, benchmark comparison이 모두 약해진다.
+
+\section{이 책을 읽는 방법}
+
+첫 번째로, 각 장을 독립된 주제 소개로 읽지 말고 하나의 system stack을 두껍게 만드는 과정으로 읽어야 한다. Chapter 2의 state estimation은 Chapter 8의 visuomotor policy 입력을 정의하고, Chapter 13의 action representation은 Chapter 18의 real-time deployment와 연결된다.
+
+두 번째로, 논문을 읽을 때도 같은 기준을 적용해야 한다. 어떤 논문이 VLA라고 주장하면 다음 질문을 해보아야 한다.
+
+\begin{enumerate}
+  \item action은 정확히 무엇인가?
+  \item action은 어떤 controller 또는 simulator interface로 들어가는가?
+  \item data는 어떤 embodiment, sensor, reset, intervention policy에서 왔는가?
+  \item evaluation은 model ability와 system engineering을 분리해 보여주는가?
+  \item failure mode와 unsafe success가 기록되는가?
+\end{enumerate}
+
+세 번째로, classical robotics와 foundation model을 경쟁 관계로 읽지 않아야 한다. 실제 시스템에서는 둘 중 하나가 사라지는 것이 아니라, 책임의 위치가 바뀐다. Learned model이 planner 역할을 일부 흡수할 수 있고, controller가 action error를 흡수할 수 있으며, safety monitor가 policy output을 수정할 수 있다. 중요한 것은 어떤 책임이 어디에 있고, 그 책임이 어떻게 검증되는가이다.
+
+\section{요약}
+
+이 책의 목적은 Real VLA를 model architecture가 아니라 robot system architecture로 읽게 만드는 것이다. VLA의 핵심 질문은 ``어떤 backbone을 썼는가''에서 끝나지 않는다. 중요한 질문은 language, vision, policy action, controller command, safety decision, data record, evaluation claim이 어떻게 닫힌 loop를 이루는가이다.
+
+따라서 이 책은 control, planning, robot learning, embodied foundation model, data engine, evaluation, safety를 한 줄로 연결한다. 이 연결이 없으면 VLA는 demo 또는 benchmark model에 머문다. 이 연결이 생길 때 VLA는 실제 로봇공학의 대상이 된다.
+
+\chapterwork
+{Chapter 1의 Real VLA definition, Chapter 13의 action contract, Chapter 16의 evaluation vector를 함께 읽어라. 세 장이 이 책의 기본 판정 기준이다.}
+{VLA claim을 $\mathcal{K}=\{M,A,P,U,D,E,S\}$로 읽으면, model-only claim에서 가장 먼저 빠지는 항목은 무엇인가?}
+{최근 VLA 논문 하나를 골라 model, action, controller, data, evaluation, safety 항목을 한 줄씩 채워라. 비어 있는 항목이 그 논문의 약한 claim이다.}
+
+다음 장에서는 이 관점을 바탕으로 Real VLA가 무엇인지 정의한다. Chapter 1은 VLA를 VLM보다 큰 robot system problem으로 재정의하고, language goal에서 motor command까지 이어지는 책임 layer를 구체화한다.

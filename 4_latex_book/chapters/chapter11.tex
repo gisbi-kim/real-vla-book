@@ -1,0 +1,253 @@
+\chapter{From Planner + Skills to VLA}
+
+\section*{학습 목표}
+
+이 장은 planner와 skill library를 결합한 구조가 왜 VLA로 이어졌는지 설명한다. Chapter 10에서는 LLM/VLM이 task를 분해하고, 기존 skill과 controller를 호출하는 구조를 다루었다. 그 구조는 해석 가능하고 안전장치를 붙이기 쉽지만, skill boundary가 너무 단단하면 새로운 행동을 만들기 어렵다. 반대로 end-to-end VLA policy는 perception, language, action을 하나의 mapping으로 학습할 수 있지만, control boundary와 safety 검증을 약화시킬 수 있다.
+
+\begin{enumerate}
+  \item planner+skills 구조의 engineering benefit과 bottleneck을 구분한다.
+  \item skill boundary를 learned policy가 흡수할 때 생기는 장점과 위험을 설명한다.
+  \item skill call, waypoint, action chunk, residual command를 VLA interface spectrum으로 정리한다.
+  \item hierarchical VLA가 pure planning과 pure end-to-end 사이의 실용적 middle ground임을 이해한다.
+\end{enumerate}
+
+\section{Planner + skills 구조의 기본형}
+
+Planner+skills 시스템은 다음 세 단계로 쓸 수 있다.
+\begin{equation}
+  \ell,\obs_t
+  \xrightarrow{M_{\theta}^{plan}}
+  P_t
+  \xrightarrow{\mathrm{Select}}
+  s_t
+  \xrightarrow{\pi_{s_t}}
+  \ctrlcmd_t.
+  \label{eq:planner-skill-basic}
+\end{equation}
+여기서 $\ell$은 language instruction, $P_t$는 plan, $s_t$는 선택된 skill, $\pi_{s_t}$는 skill에 연결된 controller 또는 policy이다. 이 구조의 장점은 module boundary가 분명하다는 것이다. planner가 틀렸는지, skill precondition이 틀렸는지, controller가 실패했는지 분리해서 진단할 수 있다.
+
+또한 이 구조는 data efficiency가 좋다. 로봇이 이미 grasp, place, navigate 같은 skill을 갖고 있으면 LLM/VLM planner는 새로운 task 조합을 비교적 적은 data로 만들 수 있다. 이때 학습 문제는 motor control 전체가 아니라 skill selection과 ordering으로 축소된다.
+\begin{equation}
+  s_t^{\star}
+  =
+  \arg\max_{s_i\in\mathcal{S}}
+  Q_{\theta}(s_i \mid \ell,\bel_t,h_t),
+  \label{eq:skill-selection-q}
+\end{equation}
+여기서 $h_t$는 history이다. 이 식에서 policy의 action space는 $\mathcal{S}$로 제한된다. 이는 장점이자 한계다.
+
+\section{Skill boundary의 병목}
+
+Skill library가 강하면 system은 안정적이다. 하지만 skill boundary가 task의 자연스러운 단위를 잘못 자르면 generalization이 막힌다. 예를 들어 ``잡기'' skill이 fixed top-down grasp만 지원한다면, 컵 손잡이, 얇은 천, 투명 용기, partially occluded object에 대해 planner가 아무리 좋은 sequence를 만들어도 실행이 어렵다.
+
+Skill boundary의 병목은 세 가지로 나타난다.
+\begin{align}
+  \mathcal{B}_{coverage}
+  &= \mathbb{I}[\exists s_i\in\mathcal{S}: s_i \text{ can express the required behavior}], \\
+  \mathcal{B}_{parameter}
+  &= \mathbb{I}[\exists \alpha_i: \pi_{s_i}(\alpha_i,\bel_t) \text{ succeeds}], \\
+  \mathcal{B}_{feedback}
+  &= \mathbb{I}[\text{skill exposes enough intermediate feedback}].
+  \label{eq:skill-bottlenecks}
+\end{align}
+첫 번째는 필요한 행동이 skill set에 있는가의 문제다. 두 번째는 skill은 있지만 parameterization이 충분한가의 문제다. 세 번째는 skill 내부 상태가 planner나 monitor에 충분히 노출되는가의 문제다.
+
+\begin{table}[h]
+  \centering
+  \caption{Skill boundary가 만드는 trade-off}
+  \begin{tabularx}{\linewidth}{p{0.22\linewidth}X X}
+    \toprule
+    Boundary choice & 장점 & 병목 \\
+    \midrule
+    Coarse skill & 안전 검증과 reuse가 쉽다 & 새로운 contact mode와 세밀한 조작이 어렵다 \\
+    Fine skill & 조합성이 좋아진다 & long-horizon planning과 error accumulation이 커진다 \\
+    Parameterized skill & 기존 controller를 유지하면서 task variation을 처리한다 & parameter space가 커지면 planner가 사실상 control 문제를 푼다 \\
+    Learned skill & data에서 motion pattern을 흡수한다 & 실패 원인과 safety certificate가 불명확해질 수 있다 \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:skill-boundary-tradeoff}
+\end{table}
+
+Real VLA 관점에서 중요한 질문은 ``skill을 쓸 것인가 말 것인가''가 아니다. 어떤 boundary를 고정하고, 어떤 boundary를 학습할 것인가이다.
+
+\section{VLA가 흡수하는 responsibility}
+
+VLA는 language와 observation에서 robot action을 바로 예측하는 방향으로 skill boundary의 일부를 흡수한다.
+\begin{equation}
+  \act_t
+  =
+  \pi_{\theta}(\ell,\obs_{\leq t},\conf_t).
+  \label{eq:vla-policy-direct}
+\end{equation}
+이 식은 planner+skills 구조와 다르게 skill name을 명시적으로 거치지 않는다. 대신 policy 내부 representation이 object, relation, subgoal, motion primitive를 latent하게 표현할 수 있다.
+
+하지만 모든 responsibility가 하나의 neural network 안으로 사라지는 것은 아니다. 실제 system에서는 VLA output을 다음 중 하나의 interface로 제한한다.
+\begin{equation}
+  \act_t
+  \in
+  \{\mathrm{skill\ call},\mathrm{waypoint},\mathrm{delta\ pose},
+  \mathrm{action\ chunk},\mathrm{joint\ command},\mathrm{residual}\}.
+  \label{eq:vla-interface-set}
+\end{equation}
+각 interface는 control boundary를 다르게 만든다. skill call은 planner+skills에 가깝고, joint command는 end-to-end control에 가깝다. waypoint와 action chunk는 중간 지점이다.
+
+\section{Interface spectrum}
+
+Planner+skills에서 VLA로 넘어가는 과정을 하나의 spectrum으로 보자.
+\begin{equation}
+  \mathcal{I}
+  =
+  \{\mathcal{I}_{symbolic},
+  \mathcal{I}_{skill},
+  \mathcal{I}_{waypoint},
+  \mathcal{I}_{chunk},
+  \mathcal{I}_{lowlevel}\}.
+  \label{eq:interface-spectrum}
+\end{equation}
+
+\begin{table}[h]
+  \centering
+  \caption{Planner+skills와 VLA 사이의 action interface}
+  \begin{tabularx}{\linewidth}{p{0.2\linewidth}X X}
+    \toprule
+    Interface & Output & Engineering implication \\
+    \midrule
+    Symbolic plan & subgoal sequence, object relation & interpretability는 높지만 executability gap이 크다 \\
+    Skill call & skill id, arguments & 안전하고 재사용 가능하나 skill coverage에 묶인다 \\
+    Waypoint & end-effector pose, target pose & motion planner와 결합하기 쉽고 controller boundary가 남는다 \\
+    Action chunk & short horizon action sequence & visuomotor smoothness를 학습하지만 latency와 stability를 관리해야 한다 \\
+    Low-level command & joint velocity, torque, gripper command & 표현력은 크지만 safety와 transfer가 어렵다 \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:interface-spectrum}
+\end{table}
+
+이 표는 VLA 논문을 읽을 때 가장 먼저 확인해야 하는 항목이다. 같은 VLA라는 이름을 쓰더라도 action interface가 다르면 학습 난이도, 필요한 data, safety checker, controller integration이 모두 달라진다.
+
+\section{Latent skill과 hierarchical policy}
+
+Planner+skills 구조에서 skill은 사람이 정의한 discrete object였다. VLA로 넘어가면 skill이 latent variable로 바뀔 수 있다.
+\begin{align}
+  z_t &\sim p_{\theta}(z_t \mid \ell,\obs_t,h_t), \\
+  \act_{t:t+H} &\sim p_{\phi}(\act_{t:t+H} \mid z_t,\obs_t,\conf_t).
+  \label{eq:latent-skill}
+\end{align}
+여기서 $z_t$는 explicit skill id가 아니라 learned latent skill이다. 이 구조는 skill library의 coverage 병목을 줄일 수 있다. data가 충분하면 latent skill은 사람이 이름 붙이지 않은 motion pattern도 표현할 수 있다.
+
+하지만 latent skill은 검증이 어렵다. explicit skill은 precondition과 termination condition을 붙일 수 있지만, latent variable은 의미가 불명확할 수 있다. 따라서 hierarchical VLA는 보통 두 가지 장치를 함께 둔다.
+\begin{equation}
+  \begin{aligned}
+  z_t &= H_{\theta}(\ell,\obs_t,h_t), \\
+  \act_t &= L_{\phi}(z_t,\obs_t,\conf_t), \\
+  \mathrm{allow}_t &= S_{\eta}(z_t,\act_t,\bel_t,\conf_t).
+  \end{aligned}
+  \label{eq:hierarchical-vla-safety}
+\end{equation}
+$H_{\theta}$는 high-level reasoning, $L_{\phi}$는 low-level action generation, $S_{\eta}$는 safety gate이다. 이 구조는 Chapter 17의 hierarchical VLA와 직접 연결된다.
+
+\section{Residual VLA}
+
+Planner+skills와 end-to-end VLA 사이의 실용적인 중간 형태는 residual command이다. 기존 controller가 nominal command를 만들고, learned policy가 보정항을 더한다.
+\begin{equation}
+  \ctrlcmd_t
+  =
+  \ctrlcmd_t^{base}
+  +
+  \Delta \ctrlcmd_t^{vla},
+  \qquad
+  \Delta \ctrlcmd_t^{vla}
+  =
+  f_{\theta}(\ell,\obs_t,\bel_t).
+  \label{eq:residual-vla}
+\end{equation}
+이 구조는 classical control의 안정성을 유지하면서 perception-language 조건을 반영할 수 있다. 예를 들어 nominal trajectory는 motion planner가 만들고, VLA는 grasp approach angle, contact timing, local correction을 보정한다.
+
+Residual 구조의 위험은 learned residual이 base controller의 안정성 가정을 깨는 것이다. 따라서 residual은 norm bound, frequency bound, safety projection을 가져야 한다.
+\begin{equation}
+  \Delta \ctrlcmd_t^{safe}
+  =
+  \Pi_{\mathcal{U}_{safe}}
+  \left(\Delta \ctrlcmd_t^{vla}\right),
+  \qquad
+  \|\Delta \ctrlcmd_t^{safe}\| \leq \epsilon.
+  \label{eq:residual-projection}
+\end{equation}
+이런 형태는 Real VLA에서 중요하다. learned model을 쓰되, controller와 safety boundary를 완전히 버리지 않는다.
+
+\section{Closed-loop feedback의 위치 변화}
+
+Planner+skills 구조에서는 feedback이 주로 planner 밖에서 처리된다. skill이 실패하면 monitor가 report를 만들고, planner가 다음 skill을 다시 고른다.
+\begin{equation}
+  h_{t+1}
+  =
+  \mathrm{Update}(h_t,r_t,e_t).
+  \label{eq:external-feedback-update}
+\end{equation}
+VLA에서는 feedback의 일부가 policy 내부 observation history로 들어간다.
+\begin{equation}
+  \act_t
+  =
+  \pi_{\theta}(\ell,\obs_{t-L:t},\act_{t-L:t-1}).
+  \label{eq:vla-feedback-history}
+\end{equation}
+이 변화는 중요하다. policy가 실패 징후를 직접 보고 local correction을 할 수 있기 때문이다. 그러나 history를 넣는 것만으로 recovery가 보장되지는 않는다. policy가 failure mode를 학습하려면 dataset에 실패, correction, recovery가 포함되어야 한다.
+
+따라서 VLA data engine은 success trajectory만 모아서는 부족하다.
+\begin{equation}
+  \mathcal{D}
+  =
+  \mathcal{D}_{success}
+  \cup
+  \mathcal{D}_{failure}
+  \cup
+  \mathcal{D}_{correction}
+  \cup
+  \mathcal{D}_{intervention}.
+  \label{eq:vla-data-mixture}
+\end{equation}
+이 식은 Chapter 14의 data engine과 연결된다. VLA가 planner+skills의 robustness를 넘어서려면 실패와 개입을 학습해야 한다.
+
+\section{Middle ground로서의 hierarchical VLA}
+
+Pure planning과 pure end-to-end policy는 양극단이다. 실제 로봇 시스템에서는 다음 objective가 동시에 필요하다.
+\begin{equation}
+  \max_{\theta,\phi}
+  \quad
+  J_{task}
+  -
+  \lambda_1 J_{unsafe}
+  -
+  \lambda_2 J_{latency}
+  -
+  \lambda_3 J_{uninterpretable}.
+  \label{eq:vla-system-objective}
+\end{equation}
+이 objective에서 task success만 최적화하면 unsafe behavior가 생길 수 있고, interpretability만 중시하면 skill boundary가 너무 rigid해진다. hierarchical VLA는 이 trade-off를 조절한다.
+
+\begin{tcolorbox}[title={Design principle: choose the learning boundary}]
+Real VLA 설계에서 핵심 결정은 model size보다 learning boundary이다. 어떤 판단을 LLM/VLM planner에 맡길지, 어떤 motion을 learned action head에 맡길지, 어떤 constraint를 controller와 safety monitor에 고정할지 먼저 정해야 한다.
+\end{tcolorbox}
+
+\section{VLA로 넘어가는 조건}
+
+Planner+skills에서 VLA로 넘어갈 필요가 생기는 조건은 비교적 분명하다.
+\begin{enumerate}
+  \item task variation이 skill library의 coverage를 넘어선다.
+  \item perception과 action 사이의 fine-grained coupling이 중요하다.
+  \item contact나 deformation처럼 symbolic subgoal로 표현하기 어려운 dynamics가 많다.
+  \item long-horizon task에서 skill 사이의 error accumulation이 커진다.
+  \item data가 충분해서 end-to-end 또는 hierarchical policy를 학습할 수 있다.
+\end{enumerate}
+
+반대로 모든 문제를 VLA로 바꿀 필요는 없다. stable pick-place, fixture가 잘 정의된 industrial task, safety-critical constrained motion은 explicit controller와 verified planner가 여전히 유리할 수 있다. Real VLA는 기존 robotics를 대체하는 이름이 아니라, 기존 robotics boundary를 학습 가능한 representation과 결합하는 설계 방식이다 \cite{saycan2022,codeaspolicies2022,rt12022}.
+
+\chapterwork
+{Planner+skills 구조와 RT-1 이후의 action-producing transformer 구조를 비교해서 읽어라 \cite{saycan2022,rt12022}.}
+{skill library가 너무 강하면 generalization이 막히고, end-to-end policy가 너무 강하면 safety/control boundary가 약해지는 이유는 무엇인가?}
+{기존 skill library가 있는 robot에 VLA policy를 추가한다고 가정하고, 어떤 boundary를 학습하고 어떤 boundary를 유지할지 표로 정리하라.}
+
+\section{요약}
+
+Planner+skills 구조는 VLA의 전 단계이면서 동시에 현대 VLA 시스템의 일부로 남아 있다. 이 구조는 해석 가능성, safety gate, controller reuse라는 장점이 있지만, skill coverage, parameterization, feedback exposure에서 병목을 만든다. VLA는 이 병목의 일부를 learned policy로 흡수한다. 그러나 모든 것을 end-to-end로 밀어 넣으면 system diagnosis와 safety assurance가 어려워진다.
+
+따라서 planner+skills에서 VLA로의 전환은 단순한 model replacement가 아니다. action interface와 learning boundary를 재설계하는 문제다. 다음 장에서는 이 전환이 실제로 Robotics Transformer 계열에서 어떻게 나타났는지, robot action이 sequence prediction과 token prediction 문제로 재정의된 과정을 다룬다.

@@ -1,0 +1,489 @@
+좋아. **rewrite는 하지 않고 gate review만** 할게. 결론부터 말하면, Section 1.1 v0.1은 **opening section으로 꽤 강하다**. 다만 바로 1.2로 넘어가기 전에 **가벼운 patch v0.2**를 한 번 하는 게 좋아. 구조 수정은 필요 없고, claim precision, citation anchor, ER/VLA/controller boundary를 조금 더 선명하게 하면 돼.
+
+기준 thesis는 잘 지켰어. 특히 “VLA는 단순 최신 로봇 foundation model이 아니라 고전 제어·계획·모션플래닝·로봇러닝·VLM/LLM이 하나의 embodied policy stack으로 재조립되는 흐름”이라는 원래 청사진과 잘 맞아. 
+
+---
+
+# 최종 판정
+
+**판정: 가벼운 수정 후 1.2로 넘어가면 됨.**
+
+* 그대로 1.2로 넘어가도 큰 문제는 없음.
+* 하지만 Chapter 1의 첫 section이라서, citation placeholder와 boundary 정의를 조금 더 단단히 박는 게 좋음.
+* 전체 rewrite는 불필요함.
+* paragraph order는 유지해도 됨.
+* 핵심 thesis 문장도 유지하는 게 좋음.
+
+---
+
+# 1. Section 1.1의 가장 강한 점 5개
+
+## 1.1 opening thesis가 명확하다
+
+“Real VLA는 더 큰 VLM이 아니다”라는 문제 제기가 좋다. 독자가 흔히 갖는 오해를 바로 잡고 시작한다. 특히 VLA를 “이미지 + 언어 → action”으로 짧게 설명한 뒤, 그것이 유용하지만 불완전하다고 지적하는 구조가 좋다.
+
+이 흐름은 Chapter 1의 opening으로 적합하다. 너무 기술적으로 시작하지 않으면서도, 책 전체의 관점을 바로 드러낸다.
+
+## 1.2 mug / drying rack / glass 예제가 좋다
+
+예제가 적절하다. 너무 거창한 humanoid 사례가 아니라, 실제 manipulation에서 자주 나오는 물체 배치, 공간 관계, 금지 조건, 접촉 위험을 포함하고 있다.
+
+이 예제는 1.2에서 Real VLA stack을 분해할 때 다시 쓰기 좋다. “instruction → reasoning → policy action → control → safety → evaluation” 흐름을 설명하는 running example로 계속 유지해도 좋다.
+
+## 1.3 semantic competence와 physical executability의 대비가 강하다
+
+이 section에서 가장 중요한 conceptual contrast다.
+
+* VLM은 scene을 설명할 수 있음
+* 그러나 scene description이 physical execution을 보장하지 않음
+* 로봇은 kinematics, dynamics, contact, latency, safety를 만남
+
+이 대비는 책 전체의 핵심 방향과 잘 맞는다.
+
+## 1.4 Real VLA를 layered system interface로 정의한 점이 좋다
+
+본문이 monolithic model hype를 피하고 있다. Real VLA를 embodied reasoning, VLA policy, motion/control, safety-assurance, data-evaluation layer로 나눠 설명한 것은 이후 Ch13, Ch14, Ch16, Ch19로 이어지는 좋은 발판이다.
+
+특히 “구현이 통합되어도 책임은 통합되지 않는다”는 관점이 좋다. 이 문장은 유지할 만하다.
+
+## 1.5 scope control이 이미 들어가 있다
+
+마지막에 action representation은 Ch13, data engine은 Ch14, evaluation은 Ch16, safety는 Ch19로 넘긴다고 명시한 점이 좋다. Ch1이 너무 많은 내용을 다 설명하려고 하지 않게 막아준다.
+
+이건 교과서 구조상 매우 중요하다.
+
+---
+
+# 2. 가장 위험한 약점 5개
+
+## 2.1 citation anchor가 거의 없다
+
+현재 draft는 개념적으로 좋지만, reference anchor가 없는 상태다. 본문 원고로 가려면 claim마다 citation placeholder가 필요하다.
+
+특히 다음 claim은 citation anchor가 필요하다.
+
+* RT-1, RT-2, OpenVLA가 로봇 policy의 범위를 넓혔다는 claim
+* “VLA policy layer”가 observation/language/proprioception에서 action을 제안한다는 claim
+* classical control이 stability, contact, latency, safety를 담당한다는 claim
+* VLA benchmark success가 robust robot capability를 보장하지 않는다는 claim
+* ER layer와 VLA policy layer를 구분해야 한다는 claim
+
+지금 상태로는 강한 에세이처럼 읽히지만, 교과서 원고로는 근거 배치가 더 필요하다.
+
+## 2.2 RT-1, RT-2, OpenVLA를 한 문장에 묶은 부분은 약간 거칠다
+
+초반에 “RT-1, RT-2, OpenVLA 같은 흐름”이라고 묶었는데, 세 시스템의 성격이 다르다.
+
+* RT-1은 large-scale language-conditioned robotics transformer에 가깝다.
+* RT-2는 web-scale VLM knowledge를 robot action으로 연결하는 VLA framing을 강하게 만든다.
+* OpenVLA는 open-source VLA와 large-scale robot demonstration scaling의 의미가 크다.
+
+한 문장에 묶어도 되지만, 각자의 역할을 너무 같게 보이게 하면 정확도가 떨어질 수 있다.
+
+## 2.3 ER layer와 VLA policy layer의 경계가 아직 충분히 선명하지 않다
+
+본문에 embodied reasoning layer가 나오긴 하지만, ER layer와 VLA policy layer의 차이가 아직 opening section에서는 약간 압축되어 있다.
+
+현재 독자는 이렇게 물을 수 있다.
+
+> “그럼 VLA가 reasoning도 하고 action도 내면 ER layer와 VLA policy layer는 왜 나누는가?”
+
+이 질문은 1.2에서 답해도 되지만, 1.1에 한 문장 정도는 더 들어가는 게 좋다.
+
+예를 들면:
+
+> ER layer는 무엇을 해야 하는지를 구조화하고, VLA policy layer는 그 구조화된 의도와 현재 observation을 robot action representation으로 변환한다.
+
+이 정도 boundary 문장이 있으면 좋다.
+
+## 2.4 “Real VLA는 layered system이다”가 너무 modular system만 뜻하는 것처럼 읽힐 수 있다
+
+본문이 monolithic model hype를 잘 막고 있지만, 반대로 “Real VLA는 반드시 명시적 모듈형 구조여야 한다”는 인상을 줄 위험이 있다.
+
+요즘 모델은 ER, VLA policy, memory, perception, action head가 한 모델 안에 섞일 수 있다. 그래서 section 안에 다음 clarification이 필요하다.
+
+> 이 책에서 말하는 layer는 반드시 별도 모듈을 뜻하지 않는다. 그것은 시스템이 져야 하는 기능적 책임의 분해이다.
+
+이 문장은 중요하다. 그래야 end-to-end 모델을 부정하는 느낌이 줄어든다.
+
+## 2.5 1.2로 넘어가는 bridge는 좋지만, Figure/Table preview가 없다
+
+마지막 bridge가 자연스럽긴 한데, 1.2에서 Figure 1.1과 Table 1.1이 등장할 것을 예고하면 더 좋다.
+
+예를 들면:
+
+> 다음 section에서는 이 경로를 Figure 1.1의 stack diagram과 Table 1.1의 layer-wise responsibility map으로 정리한다.
+
+이 정도를 마지막 문단에 넣으면 1.2가 더 준비된 느낌으로 이어진다.
+
+---
+
+# 3. Reviewer A: 로봇 제어/동역학 전문가 관점
+
+## 평가
+
+로봇 제어 관점에서는 방향이 좋다. VLA를 controller replacement가 아니라 policy interface로 보는 점이 정확하고, physical executability를 semantic competence와 분리한 것도 적절하다.
+
+특히 다음 요소가 좋다.
+
+* kinematics, dynamics, state estimation, contact, latency를 언급함
+* action이 controller boundary를 통과해야 한다고 설명함
+* joint limit, velocity limit, contact force, collision avoidance 같은 제약을 언급함
+* VLA output과 실제 command를 구분하려고 함
+
+## 우려
+
+아직 control boundary가 조금 더 기술적으로 정의될 필요가 있다. 지금은 “boundary가 있다”는 설명은 충분하지만, policy-level action과 control-level command가 어떻게 다른지 명시가 약하다.
+
+예를 들어 다음 구분을 1.1에 짧게 넣으면 좋다.
+
+* policy-level action: waypoint, delta pose, skill call, action chunk 등
+* control command: joint position, velocity, torque, impedance target 등
+
+수식까지는 아직 필요 없지만, 1.1에서 “이 둘을 혼동하지 않는다”는 문장은 필요하다.
+
+## Reviewer A의 판정
+
+**가벼운 patch 필요.**
+특히 action과 command의 차이를 한 문장 추가하면 좋다.
+
+---
+
+# 4. Reviewer B: VLA / robot learning 연구자 관점
+
+## 평가
+
+VLA/robot learning 관점에서도 큰 방향은 좋다. section이 VLA를 model-only 관점으로 좁히지 않고, data, embodiment, action representation, evaluation, safety와 연결하고 있다.
+
+특히 좋은 부분은 다음이다.
+
+* RT 계열과 OpenVLA 흐름을 opening에서 언급함
+* VLA policy layer를 명시함
+* action token, action chunk, diffusion, flow를 Ch13으로 넘김
+* VLA benchmark success와 실제 robot capability를 구분함
+
+## 우려
+
+VLA를 너무 system-interface 관점으로 강하게 설명하다 보면, end-to-end VLA research의 의미가 약해 보일 수 있다. 현재 draft는 이 균형을 대체로 잘 잡았지만, “end-to-end learning의 가치를 낮추는 것은 아니다”라는 문단이 더 중요해져야 한다.
+
+이 문단은 유지하고, 조금 더 앞쪽으로 당겨도 괜찮다. 그래야 독자가 “이 책은 VLA 회의론인가?”라고 오해하지 않는다.
+
+## Reviewer B의 판정
+
+**내용은 적절하지만, VLA의 positive contribution을 조금 더 선명하게 표현하면 좋음.**
+
+---
+
+# 5. Reviewer C: 교과서 편집자 관점
+
+## 평가
+
+opening section으로서의 품질은 좋다. 첫 문단이 개념적으로 바로 들어가고, 두 번째 문단의 mug example이 독자를 붙잡는다. 이후 semantic competence vs physical executability로 추상화하는 구조도 교과서적으로 자연스럽다.
+
+## 우려
+
+문단 수가 많고, 몇몇 문단은 비슷한 메시지를 반복한다. 특히 다음 메시지가 여러 번 변주된다.
+
+* VLA는 더 큰 VLM이 아니다.
+* VLA는 controller replacement가 아니다.
+* Real VLA는 system interface다.
+
+반복 자체는 opening에서는 괜찮지만, v0.2에서는 일부 문장을 더 압축해도 좋다.
+
+또한 Box 1.1은 좋지만, 본문과 내용이 많이 겹친다. Box는 “본문 요약”보다 “독자가 기억할 operational rule”처럼 바꾸면 더 강하다.
+
+## Reviewer C의 판정
+
+**구조 유지, 약간의 압축과 citation placeholder 추가 후 다음 section으로 진행.**
+
+---
+
+# 6. 수정해야 할 문장 또는 문단 후보
+
+아래는 전체 rewrite가 아니라 patch 후보야.
+
+## 후보 1: RT-1/RT-2/OpenVLA 문장
+
+현재 취지:
+
+> RT-1, RT-2, OpenVLA 같은 흐름은 로봇 정책을 더 이상 좁은 task-specific controller나 작은 visuomotor network로만 보지 않게 만들었다.
+
+문제는 세 시스템의 역할이 조금 다르다는 점이다.
+
+Patch 방향:
+
+> RT-1은 language-conditioned robot policy scaling을, RT-2는 web-scale vision-language knowledge와 robot action의 연결을, OpenVLA는 open-source VLA scaling의 가능성을 각각 보여주었다. 이 흐름은 로봇 정책을 더 이상 좁은 task-specific controller나 작은 visuomotor network로만 보지 않게 만들었다. [CITATION: RT-1] [CITATION: RT-2] [CITATION: OpenVLA]
+
+## 후보 2: layer 정의 문단
+
+현재 취지:
+
+> 이 system에는 적어도 다섯 종류의 책임이 있다.
+
+이 문단은 매우 중요하지만, “layer = separate module”로 오해될 수 있다.
+
+Patch 방향:
+
+> 여기서 layer는 반드시 별도 모듈을 뜻하지 않는다. 하나의 큰 모델 안에 일부 기능이 통합될 수 있더라도, instruction 해석, policy-level action 생성, physical command 변환, safety assurance, data/evaluation feedback이라는 책임은 구분되어야 한다.
+
+## 후보 3: policy-level action과 control command 구분
+
+현재 draft는 action/control boundary를 말하지만, 용어 구분이 조금 더 필요하다.
+
+Patch 방향:
+
+> 이 책에서는 policy가 제안하는 action (a_t)와 controller가 실제 로봇에 보내는 command (u_t)를 구분한다. 자세한 notation은 다음 section에서 정리하되, 이 구분은 Real VLA system의 핵심 boundary이다.
+
+수식이 부담스러우면 (a_t, u_t) 없이 써도 된다.
+
+## 후보 4: benchmark 관련 claim
+
+현재 취지:
+
+> benchmark에서 높은 success rate를 보였다고 해서 곧바로 robust robot capability가 성립하는 것은 아니다.
+
+좋은 문장이지만 citation anchor가 필요하다.
+
+Patch 방향:
+
+> benchmark에서 높은 success rate를 보였다고 해서 곧바로 robust robot capability가 성립하는 것은 아니다. Distribution shift, shortcut behavior, behavioral inertia, safety intervention, latency-aware execution은 별도의 평가축으로 다뤄져야 한다. [CITATION: vla-eval] [CITATION: BeTTER] [CITATION: ASIMOV]
+
+## 후보 5: 마지막 bridge
+
+현재 마지막 bridge는 좋지만, 1.2의 figure/table을 예고하면 더 좋다.
+
+Patch 방향:
+
+> 다음 section에서는 이 경로를 Figure 1.1의 Real VLA System Stack과 Table 1.1의 layer-wise responsibility map으로 정리한다.
+
+---
+
+# 7. 유지해야 할 문장 또는 문단 후보
+
+다음 문장/구조는 유지하는 게 좋아.
+
+## 유지 1
+
+> 실제 로봇에서 “이미지 + 언어 → action”은 전체 시스템의 설명이 아니라, VLA policy layer의 입출력을 압축한 표현일 뿐이다.
+
+이 문장은 Section 1.1의 핵심 문제 제기다. 유지해야 한다.
+
+## 유지 2
+
+> Semantic competence는 physical executability의 필요조건일 수 있지만 충분조건은 아니다.
+
+매우 좋은 핵심 문장이다. Section 1.1의 conceptual anchor로 유지하는 게 좋다.
+
+## 유지 3
+
+> 구현이 통합되어도 책임은 통합되지 않는다.
+
+이 문장은 훌륭하다. Real VLA stack을 설명할 때 너무 modular dogma로 읽히지 않게 하는 핵심 문장이다. 다만 그 앞뒤에 “functional layer”라는 설명을 추가하면 더 강해진다.
+
+## 유지 4
+
+> VLA는 controller replacement가 아니라 policy interface로 보는 것이 더 정확하다.
+
+책 전체 thesis와 직접 연결된다. 반드시 유지해야 한다.
+
+## 유지 5
+
+> Real VLA의 연구 문제는 이들 중 하나가 나머지를 대체하는 것이 아니라, 서로 다른 능력을 어떤 interface로 연결할 것인가이다.
+
+이 문장도 좋다. Chapter 1뿐 아니라 책 전체의 framing으로 쓸 수 있다.
+
+---
+
+# 8. citation anchor가 필요한 claim 목록
+
+Section 1.1 v0.2에서는 아래처럼 placeholder를 넣는 게 좋다.
+
+| Claim                                                                   | Citation placeholder                                                       |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| RT-1이 language-conditioned robot policy scaling의 대표 사례라는 claim          | `[CITATION: RT-1]`                                                         |
+| RT-2가 web-scale VLM knowledge와 robot action을 연결했다는 claim                | `[CITATION: RT-2]`                                                         |
+| OpenVLA가 open-source VLA scaling의 대표 사례라는 claim                         | `[CITATION: OpenVLA]`                                                      |
+| VLA는 image/language/action을 연결하는 policy layer라는 claim                   | `[CITATION: RT-2] [CITATION: OpenVLA]`                                     |
+| physical execution에는 kinematics/dynamics/contact/control이 필요하다는 claim   | `[CITATION: Murray-Li-Sastry] [CITATION: Siciliano Robotics]`              |
+| impedance/OSC/MPC가 real robot execution에서 중요하다는 claim                   | `[CITATION: Hogan Impedance] [CITATION: Khatib OSC] [CITATION: Mayne MPC]` |
+| LLM/VLM planner와 skill/controller 결합이 VLA 이전 bridge라는 claim             | `[CITATION: SayCan] [CITATION: Code as Policies] [CITATION: VoxPoser]`     |
+| benchmark success가 robust capability를 보장하지 않는다는 claim                   | `[CITATION: vla-eval] [CITATION: BeTTER]`                                  |
+| robot safety는 semantic/geometric/dynamic/runtime layer로 나눠 봐야 한다는 claim | `[CITATION: ASIMOV] [CITATION: robotics safety survey]`                    |
+| data/evaluation feedback이 VLA system의 일부라는 claim                        | `[CITATION: Open X-Embodiment] [CITATION: DROID] [CITATION: LIBERO]`       |
+
+---
+
+# 9. Ch13, Ch14, Ch16, Ch19로 넘겨야 하는데 너무 많이 설명한 부분
+
+전체적으로 scope control은 잘 되어 있다. 다만 다음 부분은 v0.2에서 “깊게 설명하지 않고 넘긴다”는 문장으로 정리하면 좋다.
+
+## Ch13으로 넘길 내용
+
+현재 후반부에 다음이 나온다.
+
+> VLA policy가 end-effector delta pose를 출력하든, discrete action token을 출력하든, action chunk를 출력하든, diffusion 또는 flow 기반 continuous action을 생성하든…
+
+이 정도는 좋다. 다만 각각을 설명하기 시작하면 Ch13을 침범한다. v0.2에서는 바로 이어서:
+
+> 이 장에서는 이들을 비교하지 않고, 모두가 control boundary를 정의한다는 점만 강조한다.
+
+라고 넣으면 좋다.
+
+## Ch14로 넘길 내용
+
+Data-evaluation layer가 언급되지만 아직 괜찮다. data engine 설명을 더 늘리면 안 된다.
+
+Ch1에서는 “data is part of system feedback” 정도만 말하고, embodiment normalization, teleoperation, relabeling, failure data는 Ch14로 넘기면 된다.
+
+## Ch16으로 넘길 내용
+
+Benchmark success 관련 문장은 좋지만, vla-eval, BeTTER, LIBERO, CALVIN 등의 상세 설명은 하지 않는 게 좋다.
+
+Ch1에서는 다음 정도만 남기면 된다.
+
+> 평가 점수는 capability의 proxy이지 capability 자체가 아니다.
+
+상세 benchmark protocol은 Ch16으로 넘긴다.
+
+## Ch19로 넘길 내용
+
+Safety layer가 semantic/geometric/dynamic/runtime risk를 감시한다고 했는데, 아주 적절하다. 다만 safety taxonomy를 Ch1에서 자세히 풀면 Ch19의 힘이 빠진다.
+
+Ch1에서는 “safety는 post-processing이 아니라 system responsibility”라는 claim만 고정하면 된다.
+
+---
+
+# 10. Section 1.2로 넘어가기 전에 보강해야 할 bridge
+
+현재 bridge는 좋다. 다만 다음 세 가지를 더 명시하면 1.2가 훨씬 자연스럽게 열린다.
+
+## 필요한 bridge 요소
+
+1. mug 예제가 1.2의 running example으로 계속 사용된다는 점
+2. 1.2에서 Real VLA stack diagram이 등장한다는 점
+3. 1.2에서 layer별 input/output/responsibility/failure mode를 정리한다는 점
+
+## 추가하면 좋은 bridge 문장 후보
+
+> 다음 section에서는 이 mug 예제를 따라가며 자연어 instruction이 어떻게 embodied reasoning, VLA policy, motion/control, safety-assurance, data-evaluation layer를 통과하는지 분해한다. 이 과정에서 Figure 1.1은 Real VLA System Stack을, Table 1.1은 각 layer의 input, output, responsibility, failure mode를 정리한다.
+
+이 문장을 마지막 문단에 patch로 넣으면 좋다.
+
+---
+
+# 11. Patch Priority
+
+## High priority
+
+1. **citation placeholder 추가**
+
+   * RT-1, RT-2, OpenVLA
+   * classical control references
+   * benchmark/safety references
+
+2. **layer는 functional responsibility이지 반드시 separate module은 아니라는 문장 추가**
+
+3. **policy-level action과 control command의 구분 추가**
+
+   * (a_t) vs (u_t)를 아주 짧게 소개하거나, notation 없이 설명
+
+4. **ER layer와 VLA policy layer의 차이를 한 문장으로 명확히 하기**
+
+## Medium priority
+
+1. RT-1/RT-2/OpenVLA를 한 문장에 묶은 부분을 더 정확히 바꾸기
+2. 마지막 bridge에 Figure 1.1 / Table 1.1 예고 추가
+3. Box 1.1을 본문 요약이 아니라 operational rule로 바꾸기
+4. “benchmark success is not robot capability” claim에 distribution shift/failure mode를 조금 더 명시
+
+## Low priority
+
+1. 몇몇 반복 문장 압축
+2. mug example에 “human nearby”나 “wet mug” 같은 안전 nuance 추가
+3. Section title을 유지할지, 약간 더 강하게 바꿀지 검토
+   예: `Why Real VLA Is Not Just a Bigger VLM`은 충분히 좋으므로 변경 필요는 낮음.
+
+---
+
+# 12. Section 1.1 v0.2를 만들기 위한 patch plan
+
+## Patch 1: 초반 역사 문장 정확화
+
+RT-1, RT-2, OpenVLA를 각각의 역할로 분리해서 표현한다. citation placeholder를 추가한다.
+
+## Patch 2: functional layer clarification 추가
+
+Real VLA stack을 설명하는 문단 앞이나 뒤에 다음 취지의 문장을 추가한다.
+
+> layer는 별도 모듈이 아니라 기능적 책임의 분해이다.
+
+## Patch 3: ER vs VLA policy boundary 추가
+
+Embodied reasoning layer와 VLA policy layer의 차이를 짧게 정리한다.
+
+* ER: what to do, what matters, what constraints exist
+* VLA policy: how to turn observation + intent into action representation
+
+## Patch 4: action vs command boundary 추가
+
+VLA가 출력하는 policy-level action과 controller가 보내는 physical command를 구분한다.
+
+* policy action: action chunk, waypoint, delta pose, skill call
+* controller command: joint command, torque, velocity, impedance target
+
+## Patch 5: benchmark/safety claim에 citation placeholder 추가
+
+Evaluation 관련 문장에 vla-eval, BeTTER, ASIMOV placeholder를 넣는다.
+
+## Patch 6: 마지막 bridge 강화
+
+1.2에서 stack diagram과 layer responsibility table이 등장할 것을 예고한다.
+
+## Patch 7: Box 1.1 수정
+
+Box 1.1은 유지하되, 마지막 bullet을 더 강하게 바꾼다.
+
+예:
+
+> A VLA system should be evaluated not only by what the model predicts, but by what the robot safely executes.
+
+---
+
+# 13. 최종 recommendation
+
+## 그대로 1.2로 넘어가도 되는가?
+
+가능은 해. 하지만 추천하지는 않아.
+
+## 가벼운 수정 후 넘어가야 하는가?
+
+**이게 최선이다.**
+
+## 구조 수정이 필요한가?
+
+아니다. 구조는 유지하면 된다.
+
+## 전체 rewrite가 필요한가?
+
+아니다. 전체 rewrite는 오히려 opening의 힘을 약화시킬 수 있다.
+
+---
+
+# 14. 다음 단계 지시문
+
+다음 턴에는 이렇게 시키면 좋아.
+
+```text
+방금 Gate Review의 patch plan을 기준으로 Section 1.1 Draft v0.1을 v0.2로 수정해줘.
+
+조건:
+- 전체 rewrite 금지
+- 구조는 유지
+- 문장 정확도, claim clarity, bridge만 개선
+- hype성 표현은 줄이고, Real VLA의 system-interface 관점은 더 선명하게 만들 것
+- Ch13/14/16/19로 넘겨야 할 내용은 깊게 설명하지 말고 scope control 문장으로 처리
+- citation anchor가 필요한 곳에는 [CITATION: short label] 형태의 placeholder를 넣을 것
+- 변경된 부분만 보여준 뒤, 마지막에 “변경 이유”를 bullet로 정리해줘
+```
+
+Gate Review 기준으로는 **Section 1.1 v0.1은 통과**, 다만 **v0.2 lightweight patch 후 Section 1.2 draft로 진행**이 가장 좋아.

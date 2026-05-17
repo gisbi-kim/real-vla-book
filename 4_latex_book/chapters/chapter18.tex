@@ -1,0 +1,359 @@
+\chapter{Real-Time and Hardware-Aware VLA}
+
+\section*{학습 목표}
+
+이 장은 VLA를 robot hardware 위에서 실행되는 real-time system으로 다룬다. 좋은 model은 benchmark에서 높은 success rate를 내는 것만으로 충분하지 않다. 정해진 latency budget 안에서 action을 내고, controller 주기와 맞으며, memory와 power 제약 안에서 안정적으로 실행되어야 한다. 지연이 생기면 안전하게 degrade하고, 통신이 끊기면 fallback controller로 넘어가야 한다.
+
+\begin{enumerate}
+  \item VLA inference latency가 closed-loop manipulation과 locomotion에 미치는 영향을 정식화한다.
+  \item reasoning, VLA, trajectory generator, low-level controller의 time scale을 구분한다.
+  \item action chunking, asynchronous execution, fallback controller의 역할을 설명한다.
+  \item on-device inference와 cloud inference의 trade-off를 hardware-aware 관점에서 평가한다.
+\end{enumerate}
+
+\section{Latency is part of the dynamics}
+
+로봇에서 latency는 단순한 user experience 문제가 아니다. action이 늦게 도착하면 controller는 현재 상태가 아니라 과거 상태에 맞는 명령을 실행한다. discrete-time dynamics를 다음과 같이 쓰자 \cite{mayne2000,predictivesafetyfilter2021}.
+\begin{equation}
+  \state_{t+1}
+  =
+  f(\state_t,\ctrlcmd_{t-d}) + w_t,
+  \qquad
+  d
+  =
+  \left\lceil
+  \frac{T_{lat}}{T_s}
+  \right\rceil .
+  \label{eq:ch18-delayed-dynamics}
+\end{equation}
+여기서 $T_{lat}$는 end-to-end latency, $T_s$는 control sampling period이다. $d=0$인 system과 $d=3$인 system은 같은 policy라도 다른 closed-loop system이다.
+
+VLA policy가 출력하는 command를 $\act_t$라고 하고 controller가 이를 $\ctrlcmd_t$로 변환한다고 하자.
+\begin{equation}
+  \act_t
+  =
+  \pi_{\theta}(\obs_{\leq t},\ell),
+  \qquad
+  \ctrlcmd_t
+  =
+  \controller(\state_t,\act_{t-d}).
+  \label{eq:ch18-policy-controller-delay}
+\end{equation}
+이때 latency는 action quality와 별개의 axis가 아니라 action quality의 일부다. 좋은 action도 너무 늦으면 나쁜 action이 된다.
+
+\begin{definitionbox}{Real-time VLA}
+Real-time VLA는 fixed deadline 안에서 action 또는 action chunk를 생성하고, deadline miss가 발생했을 때 controller-level fallback과 safety monitor가 정의되어 있는 VLA system이다. 여기서 real-time은 항상 hard real-time을 뜻하지 않는다. 중요한 것은 timing behavior가 측정되고 system design에 반영된다는 점이다.
+\end{definitionbox}
+
+\section{Latency budget}
+
+VLA의 end-to-end latency는 model inference 시간 하나로 설명되지 않는다.
+\begin{equation}
+  T_{lat}
+  =
+  T_{sense}
+  +
+  T_{pre}
+  +
+  T_{infer}
+  +
+  T_{decode}
+  +
+  T_{comm}
+  +
+  T_{ctrl}.
+  \label{eq:ch18-latency-budget}
+\end{equation}
+camera exposure, image transfer, resize, tokenization, model forward pass, action decoding, network communication, controller handoff가 모두 포함된다. benchmark 논문에서 inference time만 보고 real robot timing을 판단하면 위험하다.
+
+\begin{table}[h]
+  \centering
+  \caption{Latency budget 구성 요소}
+  \begin{tabularx}{\linewidth}{p{0.22\linewidth}X X}
+    \toprule
+    Component & 의미 & 주요 risk \\
+    \midrule
+    $T_{sense}$ & sensor exposure와 frame transfer & rolling shutter, dropped frame \\
+    $T_{pre}$ & resize, crop, calibration, tokenization & CPU bottleneck, copy overhead \\
+    $T_{infer}$ & VLA forward pass와 decoding & model size, batch, KV cache \\
+    $T_{decode}$ & token 또는 latent action을 command로 변환 & invalid token, IK failure \\
+    $T_{comm}$ & process, network, middleware delay & cloud jitter, ROS queue delay \\
+    $T_{ctrl}$ & controller handoff와 tracking start & stale target, frequency mismatch \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:ch18-latency-budget}
+\end{table}
+
+real robot report에는 평균 latency뿐 아니라 tail latency가 필요하다.
+\begin{equation}
+  T_{p95}
+  =
+  \inf
+  \{t \mid P(T_{lat} \leq t) \geq 0.95\}.
+  \label{eq:ch18-p95}
+\end{equation}
+평균이 낮아도 $T_{p95}$가 크면 intermittent failure가 생긴다. 특히 contact-rich manipulation에서는 tail event 한 번이 전체 episode를 망칠 수 있다.
+
+\section{Time-scale hierarchy}
+
+모든 layer가 같은 frequency로 돌 필요는 없다. 오히려 그렇게 설계하면 compute를 낭비하거나 불안정해질 수 있다.
+
+\begin{table}[h]
+  \centering
+  \caption{Robot VLA stack의 시간 척도}
+  \begin{tabularx}{\linewidth}{p{0.22\linewidth}p{0.18\linewidth}X}
+    \toprule
+    Layer & Typical rate & 역할 \\
+    \midrule
+    Embodied reasoning & event-based 또는 0.2--2 Hz & task decomposition, progress 판단, recovery \\
+    VLA policy & 1--10 Hz & action chunk, waypoint, local trajectory 생성 \\
+    Trajectory generator & 10--100 Hz & smooth interpolation, constraint handling \\
+    Low-level controller & 100--1000 Hz & joint torque, velocity, impedance tracking \\
+    Safety monitor & 50--1000 Hz & limit, collision, human proximity 감시 \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:ch18-time-scale}
+\end{table}
+
+이 hierarchy는 Chapter 17의 계층형 VLA와 직접 연결된다. 상위 reasoning은 느려도 된다. 그러나 safety monitor와 controller는 느리면 안 된다. VLA가 직접 50 Hz action을 내는 구조와, VLA가 5 Hz action chunk를 내고 low-level controller가 500 Hz로 추적하는 구조는 완전히 다른 design point이다.
+
+\section{Action chunking}
+
+action chunking은 VLA latency를 완화하는 대표적 방법이다. model이 한 번에 $H$개의 action을 출력한다고 하자.
+\begin{equation}
+  A_t^{(H)}
+  =
+  (\act_t,\act_{t+1},\ldots,\act_{t+H-1})
+  \sim
+  \pi_{\theta}(\cdot \mid \obs_{\leq t},\ell).
+  \label{eq:ch18-action-chunk}
+\end{equation}
+chunk 실행 중 model은 다음 chunk를 비동기적으로 계산할 수 있다. effective planning interval은 줄어들지만, interruption latency는 커진다.
+\begin{equation}
+  T_{interrupt}
+  \approx
+  \min(H T_s, T_{monitor})
+  \quad
+  \text{if override is enabled}.
+  \label{eq:ch18-interrupt}
+\end{equation}
+override가 없으면 $H$가 클수록 위험하다. 따라서 action chunk는 반드시 monitor-triggered cancellation과 함께 설계되어야 한다.
+
+\begin{warningbox}{Long chunk의 위험}
+긴 action chunk는 inference latency를 숨길 수 있지만, scene이 바뀌었을 때 오래된 계획을 계속 실행하게 만들 수 있다. 특히 사람과 가까운 manipulation, moving object, contact transition에서는 chunk horizon을 task phase에 따라 줄이거나 safety monitor가 즉시 중단할 수 있어야 한다.
+\end{warningbox}
+
+\section{Asynchronous execution}
+
+실제 system에서는 sensing, inference, decoding, control이 같은 thread에서 순차적으로 실행되지 않는다. 비동기 pipeline이 필요하다.
+\begin{equation}
+  \mathrm{Pipeline}
+  =
+  (
+  Q_{obs},
+  Q_{act},
+  \pi_{\theta},
+  \controller,
+  \mathcal{W}
+  ).
+  \label{eq:ch18-pipeline}
+\end{equation}
+$Q_{obs}$는 timestamped observation queue, $Q_{act}$는 action queue, $\mathcal{W}$는 watchdog이다.
+
+비동기 system의 핵심 문제는 stale action이다. action이 생성된 observation time을 $t_o$, 실행 time을 $t_e$라고 하면 freshness는 다음과 같이 정의할 수 있다.
+\begin{equation}
+  F
+  =
+  \mathbb{I}
+  [
+  t_e - t_o \leq T_{fresh}
+  ].
+  \label{eq:ch18-freshness}
+\end{equation}
+$F=0$이면 action은 실행하지 않거나 revalidate해야 한다. stale action을 그대로 실행하는 것은 latency를 줄인 것이 아니라 timing bug를 숨긴 것이다.
+
+\section{Hardware constraints}
+
+robot hardware에서는 compute resource가 고정되어 있지 않다. GPU load, memory pressure, power mode, thermal throttling, sensor bandwidth가 시간에 따라 변한다. hardware state를 $h_t$라고 하면 VLA runtime은 다음 조건부 system이 된다.
+\begin{equation}
+  \act_t
+  \sim
+  \pi_{\theta}
+  (\cdot \mid \obs_{\leq t},\ell,h_t),
+  \qquad
+  h_t
+  =
+  (
+  M_t,
+  C_t,
+  P_t,
+  \Theta_t,
+  B_t
+  ).
+  \label{eq:ch18-hardware-state}
+\end{equation}
+여기서 $M_t$는 memory, $C_t$는 compute availability, $P_t$는 power budget, $\Theta_t$는 temperature, $B_t$는 bandwidth이다.
+
+\begin{table}[h]
+  \centering
+  \caption{Hardware-aware VLA의 제약}
+  \begin{tabularx}{\linewidth}{p{0.22\linewidth}X X}
+    \toprule
+    Constraint & VLA에 미치는 영향 & 대응 \\
+    \midrule
+    Memory & model size, image resolution, context length 제한 & quantization, adapter loading, streaming \\
+    Compute & inference rate와 batch size 제한 & smaller policy head, early exit, distillation \\
+    Power & mobile robot runtime 제한 & duty cycle, dynamic model selection \\
+    Thermal & long-run latency drift & throttling-aware scheduler, cooling margin \\
+    Bandwidth & sensor streaming과 cloud inference 제한 & compression, local preprocessing, keyframe selection \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:ch18-hardware}
+\end{table}
+
+hardware-aware 설계는 모델을 작게 만드는 작업만이 아니다. 어떤 layer를 on-device에 두고, 어떤 layer를 remote에 둘지, 어떤 frequency로 호출할지 결정하는 architecture problem이다.
+
+\section{On-device versus cloud inference}
+
+cloud inference는 큰 model과 최신 weights를 쉽게 쓸 수 있다는 장점이 있다. 그러나 robot control에서는 network jitter와 connectivity failure가 치명적이다.
+
+\begin{table}[h]
+  \centering
+  \caption{On-device와 cloud VLA의 비교}
+  \begin{tabularx}{\linewidth}{p{0.22\linewidth}X X}
+    \toprule
+    기준 & On-device & Cloud \\
+    \midrule
+    Latency & 낮고 예측 가능할 수 있음 & network jitter와 queue delay 존재 \\
+    Model scale & hardware에 제한됨 & 큰 model 사용 가능 \\
+    Privacy & sensor data 외부 전송 감소 & video와 scene data 전송 risk \\
+    Reliability & local failure mode 중심 & connectivity와 service availability 의존 \\
+    Update & 배포와 version 관리 필요 & centralized update 쉬움 \\
+    Safety & local watchdog과 밀접 결합 가능 & remote action은 local validation 필수 \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:ch18-device-cloud}
+\end{table}
+
+현실적인 구조는 hybrid인 경우가 많다. 상위 reasoning이나 semantic query는 cloud model을 쓰고, low-level VLA 또는 fallback policy는 on-device에 둔다. 이때 cloud output은 직접 motor command가 아니라 local validator를 통과해야 하는 subgoal 또는 plan이어야 한다.
+
+\section{Compression and its robot-specific risks}
+
+quantization, pruning, distillation, low-rank adaptation은 VLA deployment에 필요할 수 있다. 그러나 robotics에서는 language benchmark와 다른 failure mode가 생긴다.
+
+\begin{equation}
+  \theta'
+  =
+  \mathcal{C}(\theta),
+  \qquad
+  \Delta_{\pi}
+  =
+  \mathbb{E}
+  [
+  d(\pi_{\theta}(\obs,\ell),\pi_{\theta'}(\obs,\ell))
+  ].
+  \label{eq:ch18-compression-drift}
+\end{equation}
+문제는 $\Delta_{\pi}$가 작아도 rare contact state나 safety-critical state에서 error가 커질 수 있다는 점이다.
+
+\begin{table}[h]
+  \centering
+  \caption{Model compression의 robotics-specific risk}
+  \begin{tabularx}{\linewidth}{p{0.2\linewidth}X X}
+    \toprule
+    방법 & 장점 & 주의점 \\
+    \midrule
+    Quantization & memory와 latency 감소 & small action difference가 contact outcome을 바꿀 수 있음 \\
+    Distillation & 작은 student policy 확보 & teacher의 uncertainty와 failure behavior가 사라질 수 있음 \\
+    Pruning & compute 감소 & rare skill 또는 object category 성능 저하 \\
+    Early exit & easy frame에서 빠른 inference & hard state를 제대로 감지하지 못하면 위험 \\
+    Adapter swapping & robot별 specialization & load time, version mismatch, calibration mismatch \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:ch18-compression-risk}
+\end{table}
+
+따라서 compressed VLA는 평균 success rate만으로 검증하면 안 된다. latency gain과 함께 action distribution shift, unsafe event, recovery performance를 다시 측정해야 한다.
+
+\section{Watchdog and fallback controller}
+
+real-time VLA에는 watchdog이 필요하다. watchdog은 model이 늦거나 이상한 command를 내면 system을 안전한 상태로 전환한다.
+\begin{equation}
+  m_t^{run}
+  =
+  \begin{cases}
+  \mathrm{VLA} & T_{lat} \leq T_{max} \wedge \act_t \in \mathcal{A}_{safe}, \\
+  \mathrm{fallback} & T_{lat} > T_{max} \vee \act_t \notin \mathcal{A}_{safe}, \\
+  \mathrm{halt} & \state_t \notin \mathcal{S}_{safe}.
+  \end{cases}
+  \label{eq:ch18-watchdog}
+\end{equation}
+fallback은 단순 정지가 아닐 수 있다. gripper force를 낮추고 retract하거나, current trajectory를 부드럽게 stop하거나, base를 멈추고 arm을 safe pose로 보내는 controller가 될 수 있다.
+
+\begin{definitionbox}{Graceful degradation}
+Graceful degradation은 VLA가 deadline을 놓치거나 uncertainty가 커졌을 때 system이 갑자기 실패하지 않고, 더 보수적이고 검증 가능한 mode로 전환되는 성질이다. real robot에서는 peak performance보다 degradation path가 더 중요할 수 있다.
+\end{definitionbox}
+
+\section{Timing report standard}
+
+VLA 논문이나 system report가 real deployment를 주장하려면 다음 timing 정보를 포함해야 한다.
+\begin{enumerate}
+  \item sensor frequency, image resolution, preprocessing device
+  \item model size, precision, hardware accelerator, batch size
+  \item mean, median, p95, p99 end-to-end latency
+  \item action output rate와 low-level controller rate
+  \item action chunk horizon, interruption rule, watchdog threshold
+  \item on-device/cloud boundary와 communication delay
+  \item thermal throttling 또는 long-run latency drift 측정
+  \item deadline miss가 발생했을 때 fallback behavior
+\end{enumerate}
+
+이 정보가 없으면 같은 model score라도 deployment risk를 비교할 수 없다. robotics에서 timing은 implementation detail이 아니라 reproducibility condition이다.
+
+\begin{table}[h]
+  \centering
+  \small
+  \caption{Real-time VLA 논문에서 자주 빠지는 timing evidence}
+  \begin{tabularx}{\linewidth}{@{}p{0.34\linewidth}X@{}}
+    \toprule
+    항목 & 빠지면 약해지는 claim \\
+    \midrule
+    Mean latency & 평균만 있으면 tail failure를 볼 수 없다. \\
+    p95/p99 latency & real-time 안정성과 deadline miss risk를 판단할 수 없다. \\
+    Stale action rejection & 오래된 action을 실행하지 않는지 확인할 수 없다. \\
+    Watchdog behavior & model timeout 또는 invalid action에서 system이 어떻게 전환되는지 불명확하다. \\
+    Fallback controller & 실패 시 stop, retract, hold, safe pose 중 무엇을 하는지 알 수 없다. \\
+    Cloud/on-device boundary & network jitter가 safety-critical path에 들어가는지 판단할 수 없다. \\
+    Thermal throttling & 장시간 실행에서 latency drift가 생기는지 알 수 없다. \\
+    \bottomrule
+  \end{tabularx}
+  \label{tab:ch18-missing-timing-evidence}
+\end{table}
+
+\section{Design checklist}
+
+hardware-aware VLA를 설계할 때는 다음 순서가 실용적이다.
+\begin{enumerate}
+  \item task가 요구하는 control frequency와 reaction time을 먼저 정한다.
+  \item VLA가 직접 출력할 action abstraction과 chunk horizon을 정한다.
+  \item latency budget을 sensing, preprocessing, inference, decoding, communication, control로 분해한다.
+  \item p95와 p99 latency를 측정하고 deadline miss policy를 정한다.
+  \item on-device와 cloud boundary를 safety-critical path 기준으로 나눈다.
+  \item compression 후에는 success rate뿐 아니라 unsafe event와 action distribution drift를 재측정한다.
+  \item watchdog, fallback controller, stale action rejection을 integration test에 넣는다.
+\end{enumerate}
+
+\begin{casebox}{Case study: cloud VLA와 stale action}
+cloud inference를 쓰면 큰 model을 사용할 수 있지만 network jitter가 safety-critical path에 들어온다. action이 생성된 observation이 이미 오래되었다면, controller는 의미상 맞지만 물리적으로 stale한 command를 실행할 수 있다. 따라서 cloud/on-device 비교는 average success가 아니라 p95/p99 latency, stale-action rejection, watchdog, fallback controller를 함께 보고해야 한다.
+\end{casebox}
+
+\chapterwork
+{MPC와 predictive safety filter를 real-time VLA의 deadline, fallback, stale-action rejection 문제와 함께 읽어라 \cite{mayne2000,predictivesafetyfilter2021}.}
+{평균 inference latency가 낮아도 robot deployment claim이 약할 수 있는 이유는 무엇인가?}
+{edge/cloud hybrid VLA system에 대해 sensing, preprocessing, inference, decoding, communication, control의 latency budget과 watchdog policy를 설계하라.}
+
+\section{요약}
+
+Real-time VLA의 핵심은 model을 빠르게 만드는 것 하나가 아니다. latency는 dynamics에 들어가며, control frequency hierarchy, action chunking, asynchronous execution, hardware state, cloud boundary, fallback controller가 모두 함께 설계되어야 한다. 큰 model이 더 좋은 model일 수는 있지만, robot 위에서는 deadline을 지키지 못하는 큰 model보다 안정적으로 닫힌 루프를 유지하는 작은 model이 더 나을 수 있다.
+
+다음 장에서는 이 timing-aware system이 사람과 물리 환경 안에서 어떤 safety와 assurance 문제를 갖는지 다룬다. VLA가 action을 생성할 수 있다는 사실과, 그 action을 신뢰하고 배치할 수 있다는 사실은 다른 문제다.
